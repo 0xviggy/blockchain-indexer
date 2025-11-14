@@ -40,9 +40,27 @@ This document captures all setup steps, learning points, architectural decisions
 - [ ] Kafka producer integration
 - [ ] Unit tests
 
+### ✅ Phase 2.1: Advanced Message Parsing (Completed - Nov 14, 2025)
+- [x] Database schema for calldata parsing
+- [x] Internal transactions tracking table
+- [x] Revert reasons extraction table
+- [x] Protocol signatures registry (Uniswap, LayerZero, 1inch, etc.)
+- [x] Analytics views for transaction insights
+
+**What we built**: Extended the database to capture not just events, but also:
+- **Parsed calldata**: Decode function calls to understand user intent (swaps, bridges, etc.)
+- **Internal transactions**: Track contract-to-contract calls within transactions
+- **Revert reasons**: Capture why transactions fail
+- **Protocol registry**: Pre-populated with 12+ common protocols (Uniswap V2/V3, LayerZero, Seaport, Across, Stargate, 1inch, Curve, Aave)
+
+**Files Created**: `database/migrations/002_add_calldata_parsing.sql` (300+ lines)
+
 ### 📋 Phase 3: Processor Service (Planned)
 - [ ] Kafka consumer setup
 - [ ] Event parsing (ERC20, ERC721)
+- [ ] Calldata parsing implementation
+- [ ] Internal transaction extraction
+- [ ] Revert reason extraction
 - [ ] ABI decoding
 - [ ] Database writer with batching
 - [ ] Error handling & retries
@@ -230,6 +248,170 @@ reorg_events (chain_id, rollback_from_block, rollback_to_block, handled)
 #### Phase 1 Summary - What We Accomplished:
 - ✅ **6 files created** (~700 lines of code)
 - ✅ **5 Docker services** orchestrated
+
+---
+
+### Phase 2.1: Calldata Parsing Implementation (COMPLETED ✅)
+**Date**: 2025-11-14  
+**What we built**: Advanced message parsing capabilities
+
+#### Files Created:
+**`database/migrations/002_add_calldata_parsing.sql`** (300+ lines)
+
+This migration adds four new tables:
+
+1. **`parsed_calldata`** - Decoded function calls
+   ```sql
+   - chain_id, tx_hash
+   - function_signature (4-byte selector, e.g., 0x38ed1739)
+   - function_name (e.g., "swapExactTokensForTokens")
+   - protocol (e.g., "uniswap-v2", "layerzero", "1inch")
+   - decoded_params (JSONB with function arguments)
+   ```
+
+2. **`internal_transactions`** - Contract-to-contract calls
+   ```sql
+   - chain_id, tx_hash, internal_tx_index
+   - call_type ('call', 'delegatecall', 'staticcall', 'create', 'create2')
+   - from_address, to_address, value
+   - input, output, success
+   ```
+
+3. **`revert_reasons`** - Failed transaction error messages
+   ```sql
+   - chain_id, tx_hash
+   - revert_reason (string error message)
+   - error_signature, error_name (for custom errors)
+   - error_params (JSONB for structured errors)
+   ```
+
+4. **`protocol_signatures`** - Function signature registry
+   ```sql
+   - signature (4-byte selector)
+   - function_name, protocol
+   - abi (full function signature for decoding)
+   - description
+   ```
+
+#### Pre-populated Protocol Signatures:
+
+**DEX Protocols:**
+- Uniswap V2: `swapExactTokensForTokens`, `swapExactETHForTokens`, `swapExactTokensForETH`
+- Uniswap V3: `exactInputSingle`, `exactInput`
+- Curve: `exchange`
+- 1inch: `swap`
+
+**Bridge Protocols:**
+- LayerZero: `send`
+- Across: `deposit`
+- Stargate: `swap`
+
+**NFT Marketplaces:**
+- OpenSea Seaport: `fulfillOrder`
+
+**DeFi Lending:**
+- Aave V3: `supply`, `withdraw`
+
+#### Example Use Cases:
+
+**1. Track DEX Swap Activity:**
+```sql
+-- Find all Uniswap swaps
+SELECT 
+    t.tx_hash,
+    t.from_address,
+    pc.function_name,
+    pc.decoded_params->>'amountIn' as amount_in,
+    pc.decoded_params->>'path' as swap_path
+FROM transactions t
+JOIN parsed_calldata pc ON t.tx_hash = pc.tx_hash
+WHERE pc.protocol = 'uniswap-v2'
+  AND pc.function_name = 'swapExactTokensForTokens';
+```
+
+**2. Analyze Bridge Usage:**
+```sql
+-- Cross-chain activity via LayerZero
+SELECT 
+    chain_id,
+    COUNT(*) as bridge_count,
+    decoded_params->>'dstChainId' as destination_chain
+FROM parsed_calldata
+WHERE protocol = 'layerzero'
+GROUP BY chain_id, decoded_params->>'dstChainId';
+```
+
+**3. Find Common Failure Reasons:**
+```sql
+-- Most common revert reasons
+SELECT 
+    revert_reason,
+    COUNT(*) as failure_count
+FROM revert_reasons
+WHERE chain_id = 1
+GROUP BY revert_reason
+ORDER BY failure_count DESC
+LIMIT 10;
+```
+
+**4. Track Internal Value Transfers:**
+```sql
+-- See where ETH flows within a complex transaction
+SELECT 
+    it.internal_tx_index,
+    it.from_address,
+    it.to_address,
+    it.value,
+    it.call_type
+FROM internal_transactions it
+WHERE it.tx_hash = '0x123...'
+  AND it.value > 0
+ORDER BY it.internal_tx_index;
+```
+
+#### New Analytics Views:
+
+**`transaction_analytics`**: Enriched transaction data
+```sql
+SELECT * FROM transaction_analytics 
+WHERE protocol = 'uniswap-v3'
+  AND status = FALSE;  -- Failed Uniswap swaps with revert reasons
+```
+
+**`protocol_usage_stats`**: Protocol popularity metrics
+```sql
+SELECT * FROM protocol_usage_stats
+ORDER BY call_count DESC;  -- Most used protocols
+```
+
+#### Why This Matters for Interviews:
+
+**System Design Question**: "How would you track DEX trading activity across multiple chains?"
+
+**Answer**: 
+"We parse transaction calldata to extract swap details:
+1. Extract 4-byte function signature from transaction input
+2. Look up protocol in our signature registry
+3. Decode parameters using the stored ABI
+4. Store in `parsed_calldata` with structured JSONB
+5. Query aggregated stats with views like `protocol_usage_stats`
+
+This enables analytics like:
+- Daily volume per DEX per chain
+- Most popular trading pairs
+- Swap success/failure rates
+- Cross-chain DEX usage patterns
+
+We also track internal transactions to capture the full flow of funds through DEX routers."
+
+#### Implementation Status:
+- ✅ Database schema completed
+- ✅ 12+ protocols pre-configured
+- ✅ Partitioned for multi-chain support
+- ✅ Indexes optimized for common queries
+- ✅ Analytics views created
+- ⏳ Go parser implementation (Phase 3)
+- ⏳ RPC trace extraction (Phase 3)
 - ✅ **5 database tables** with 15 partitions
 - ✅ **20+ indexes** for performance
 - ✅ **20+ Makefile commands** for development
@@ -332,7 +514,140 @@ make docker-up
 
 ## Key Technical Concepts
 
-### 1. Blockchain Reorg Handling
+### 1. Message Parsing Overview
+
+**What types of onchain messages exist?**
+
+```
+Raw Transaction
+    ├─> Standard Fields (to, from, value) ✅ Already tracked
+    ├─> Logs/Events (ERC20, ERC721) ✅ Already parsed
+    ├─> Calldata Parsing ⭐ NEW (Phase 2.1)
+    │   ├─> Function signature detection
+    │   ├─> ABI decoding
+    │   └─> Protocol-specific parsers
+    ├─> Internal Transactions ⭐ NEW (Phase 2.1)
+    │   ├─> Contract calls
+    │   ├─> Contract creations
+    │   └─> Value transfers
+    └─> Revert Reasons ⭐ NEW (Phase 2.1)
+        ├─> Error extraction
+        └─> Error classification
+```
+
+#### **Internal Transactions**
+Internal transactions are contract-to-contract calls that happen within a transaction.
+
+**Example Flow:**
+```
+User calls Uniswap Router
+  → Router calls WETH contract (internal tx)
+  → Router calls USDC contract (internal tx)
+  → Router calls Pool contract (internal tx)
+```
+
+**Why track them:**
+- See full flow of funds through contracts
+- Track contract creation by other contracts
+- Understand complex DeFi interactions
+- Essential for accurate balance tracking
+
+**How to extract:**
+```go
+// Use debug_traceTransaction or trace_transaction RPC methods
+traces, err := client.TraceTransaction(ctx, txHash)
+// Returns all internal calls with: from, to, value, gas, callType
+```
+
+#### **Calldata Parsing**
+Calldata is the encoded function call sent to a contract. Parsing reveals what function was called and with what parameters.
+
+**Common Protocol Examples:**
+
+**Uniswap V2 Swap:**
+```solidity
+// Function: swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] path, address to, uint deadline)
+// Signature: 0x38ed1739
+
+// Decoded data reveals:
+// - amountIn: 1000000000000000000 (1 token)
+// - amountOutMin: 950000000000000000 (0.95 token min)
+// - path: [USDC, WETH] (swap route)
+// - to: 0x123... (recipient)
+// - deadline: 1700000000 (unix timestamp)
+```
+
+**LayerZero Bridge:**
+```solidity
+// Function: send(uint16 dstChainId, bytes dstAddress, bytes payload, ...)
+// Signature: 0x001a0a6e
+
+// Decoded data shows:
+// - dstChainId: 137 (Polygon)
+// - dstAddress: 0x456... (destination address)
+// - payload: cross-chain message content
+```
+
+**Why parse calldata:**
+- Understand user intent (swap, bridge, mint, vote)
+- Track cross-chain activity flows
+- Build protocol-specific analytics dashboards
+- Enable smart contract interaction tracking
+
+**Implementation:**
+```go
+// 1. Extract function signature (first 4 bytes)
+signature := txInput[:4] // e.g., 0x38ed1739
+
+// 2. Look up in protocol signatures database
+protocol := db.LookupProtocol(signature)
+
+// 3. Decode using ABI
+abi := protocol.GetABI()
+decoded, err := abi.Unpack(signature, txInput[4:])
+
+// 4. Store in parsed_calldata table
+db.InsertParsedCalldata(txHash, protocol, decoded)
+```
+
+#### **Revert Reason Extraction**
+When a transaction fails, the EVM returns an error message. By default, you only see `status: false`.
+
+**Example:**
+```solidity
+require(balance >= amount, "Insufficient balance");
+// If this fails, revert reason = "Insufficient balance"
+```
+
+**Common Revert Reasons:**
+- "Insufficient balance"
+- "Transfer amount exceeds allowance"
+- "Slippage tolerance exceeded"
+- "Deadline expired"
+- "Reentrancy guard"
+
+**How to extract:**
+```go
+// For failed transactions
+if receipt.Status == 0 {
+    // Method 1: Replay transaction with eth_call
+    _, err := client.CallContract(ctx, msg, receipt.BlockNumber)
+    revertReason := parseRevertReason(err)
+    
+    // Method 2: Use debug_traceTransaction
+    trace, _ := client.TraceTransaction(ctx, txHash)
+    revertReason := parseTraceOutput(trace.Output)
+}
+```
+
+**Why extract revert reasons:**
+- Debug failed transactions
+- Understand common failure patterns
+- Alert users with meaningful errors
+- Analytics on smart contract issues
+- Improve UX by showing why tx failed
+
+### 2. Blockchain Reorg Handling
 
 **What is a Reorg?**
 A blockchain reorganization occurs when a competing chain becomes longer than the current canonical chain, causing blocks to be replaced.
@@ -358,7 +673,7 @@ if storedBlock.Hash != newBlock.ParentHash {
 - Always track parent hashes to detect reorgs
 - Use database transactions for atomic rollback
 
-### 2. Event Parsing (ERC20 Transfer Example)
+### 3. Event Parsing (ERC20 Transfer Example)
 
 **Event Signature**:
 ```solidity
@@ -395,7 +710,7 @@ func parseTransfer(log *types.Log) (*TokenTransfer, error) {
 - ABI encoding/decoding is crucial for custom events
 - Use go-ethereum's `abigen` for type-safe parsing
 
-### 3. Database Partitioning Strategy
+### 4. Database Partitioning Strategy
 
 **Why Partition?**
 - Faster queries on recent data
@@ -424,7 +739,7 @@ CREATE TABLE blocks_eth_1m_to_2m PARTITION OF blocks
 - Can drop old partitions for archival
 - Composite key (chain_id, block_number) enables multi-chain partitioning
 
-### 4. Rate Limiting with Token Bucket
+### 5. Rate Limiting with Token Bucket
 
 **Algorithm**:
 - Bucket has capacity N tokens
@@ -466,7 +781,7 @@ func (tb *TokenBucket) Allow() bool {
 - Can implement per-IP and per-API-key limiting
 - Use Redis for distributed rate limiting
 
-### 5. Kafka Message Ordering
+### 6. Kafka Message Ordering
 
 **Challenge**: Maintain block ordering across consumers
 

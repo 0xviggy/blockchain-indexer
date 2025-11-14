@@ -69,3 +69,52 @@ type Checkpoint struct {
 	LastProcessedBlock int64     `json:"last_processed_block" db:"last_processed_block"`
 	UpdatedAt          time.Time `json:"updated_at" db:"updated_at"`
 }
+
+// ParsedCalldata represents decoded function calls
+type ParsedCalldata struct {
+	ChainID           int       `json:"chain_id" db:"chain_id"`
+	TxHash            string    `json:"tx_hash" db:"tx_hash"`
+	FunctionSignature string    `json:"function_signature" db:"function_signature"`
+	FunctionName      string    `json:"function_name" db:"function_name"`
+	Protocol          string    `json:"protocol" db:"protocol"`
+	DecodedParams     string    `json:"decoded_params" db:"decoded_params"` // JSONB as string
+	CreatedAt         time.Time `json:"created_at" db:"created_at"`
+}
+
+// InternalTransaction represents contract-to-contract calls
+type InternalTransaction struct {
+	ChainID           int       `json:"chain_id" db:"chain_id"`
+	TxHash            string    `json:"tx_hash" db:"tx_hash"`
+	InternalTxIndex   int       `json:"internal_tx_index" db:"internal_tx_index"`
+	CallType          string    `json:"call_type" db:"call_type"`
+	FromAddress       string    `json:"from_address" db:"from_address"`
+	ToAddress         *string   `json:"to_address" db:"to_address"`
+	Value             string    `json:"value" db:"value"`
+	Gas               int64     `json:"gas" db:"gas"`
+	GasUsed           int64     `json:"gas_used" db:"gas_used"`
+	Input             []byte    `json:"input" db:"input"`
+	Output            []byte    `json:"output" db:"output"`
+	Success           bool      `json:"success" db:"success"`
+	CreatedAt         time.Time `json:"created_at" db:"created_at"`
+}
+
+// RevertReason stores error messages from failed transactions
+type RevertReason struct {
+	ChainID        int       `json:"chain_id" db:"chain_id"`
+	TxHash         string    `json:"tx_hash" db:"tx_hash"`
+	RevertReason   *string   `json:"revert_reason" db:"revert_reason"`
+	ErrorSignature *string   `json:"error_signature" db:"error_signature"`
+	ErrorName      *string   `json:"error_name" db:"error_name"`
+	ErrorParams    *string   `json:"error_params" db:"error_params"` // JSONB as string
+	ExtractedAt    time.Time `json:"extracted_at" db:"extracted_at"`
+}
+
+// ProtocolSignature represents a known function signature
+type ProtocolSignature struct {
+	Signature    string    `json:"signature" db:"signature"`
+	FunctionName string    `json:"function_name" db:"function_name"`
+	Protocol     string    `json:"protocol" db:"protocol"`
+	ABI          string    `json:"abi" db:"abi"`
+	Description  *string   `json:"description" db:"description"`
+	CreatedAt    time.Time `json:"created_at" db:"created_at"`
+}

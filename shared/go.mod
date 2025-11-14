@@ -1,5 +1,3 @@
-# Shared Go packages for the indexer
-
 module github.com/yourorg/indexer/shared
 
 go 1.21
