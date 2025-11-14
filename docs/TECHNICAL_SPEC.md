@@ -1002,11 +1002,136 @@ async fn test_reorg_handling() {
 
 ---
 
+## Multi-Chain Architecture
+
+### Overview
+
+This indexer provides **native multi-chain support** similar to Blockscan, allowing you to index and query data across multiple blockchain networks from a single deployment. Each chain is treated as a first-class citizen with independent ingestion, processing, and storage.
+
+### Supported Chains
+
+**Tier 1: EVM Chains (Day 1 Support)**
+| Chain | Chain ID | Block Time | Finality | Notes |
+|-------|----------|------------|----------|-------|
+| **Ethereum** | 1 | ~12s | 64 blocks (~13min) | Reference chain |
+| **Polygon** | 137 | ~2s | 256 blocks (~8.5min) | High throughput |
+| **Arbitrum** | 42161 | ~0.25s | 900 blocks (~15min) | Very fast |
+| **Optimism** | 10 | ~2s | 300 blocks (~10min) | OP Stack |
+| **Base** | 8453 | ~2s | 300 blocks (~10min) | OP Stack |
+
+**Tier 2: Easy to Add**
+- BSC (56), Avalanche (43114), Fantom (250), Gnosis (100)
+- zkSync Era (324), Polygon zkEVM (1101)
+
+### Multi-Chain Ingestion Strategy
+
+**Dedicated Ingester per Chain (Recommended)**
+- Independent scaling per chain
+- Isolated failures
+- Chain-specific optimizations
+- Easy to add/remove chains
+
+```
+Ethereum Ingester → eth.blocks → Kafka
+Polygon Ingester → poly.blocks → Kafka  
+Arbitrum Ingester → arb.blocks → Kafka
+```
+
+### Database Schema (Partitioned by Chain)
+
+```sql
+-- Blocks table with LIST partitioning
+CREATE TABLE blocks (
+    chain_id INT NOT NULL,
+    block_number BIGINT NOT NULL,
+    block_hash VARCHAR(66) NOT NULL,
+    parent_hash VARCHAR(66) NOT NULL,
+    ...
+    PRIMARY KEY (chain_id, block_number)
+) PARTITION BY LIST (chain_id);
+
+-- One partition per chain
+CREATE TABLE blocks_eth PARTITION OF blocks FOR VALUES IN (1);
+CREATE TABLE blocks_polygon PARTITION OF blocks FOR VALUES IN (137);
+CREATE TABLE blocks_arbitrum PARTITION OF blocks FOR VALUES IN (42161);
+```
+
+**Benefits:**
+- Query planner automatically selects correct partition
+- Can drop old partitions for archival
+- Independent maintenance per chain
+
+### Multi-Chain API Design
+
+**Chain-Specific Endpoints:**
+```bash
+GET /api/v1/eth/blocks/18234567
+GET /api/v1/polygon/transactions/0x123...
+GET /api/v1/arbitrum/events?contract=0xABC
+```
+
+**Cross-Chain Endpoints:**
+```bash
+# Get address activity across ALL chains
+GET /api/v1/addresses/0x123.../transactions
+
+# Get portfolio across all chains
+GET /api/v1/addresses/0x123.../portfolio
+
+# List supported chains
+GET /api/v1/chains
+```
+
+### Adding a New Chain (5 minutes)
+
+```sql
+-- 1. Add chain metadata
+INSERT INTO chains VALUES (56, 'BSC', 'https://bsc-dataseed.binance.org', 3, 15);
+
+-- 2. Create partitions
+CREATE TABLE blocks_bsc PARTITION OF blocks FOR VALUES IN (56);
+CREATE TABLE transactions_bsc PARTITION OF transactions FOR VALUES IN (56);
+CREATE TABLE events_bsc PARTITION OF events FOR VALUES IN (56);
+```
+
+```yaml
+# 3. Update ingester config
+chains:
+  - chain_id: 56
+    name: BSC
+    rpc_urls: [...]
+    start_block: 30000000
+```
+
+### Chain-Specific Optimizations
+
+**Ethereum:** Slower blocks, aggressive caching  
+**Polygon:** Larger batches (500-1000), more frequent reorgs  
+**Arbitrum:** Very large batches (1000+), very fast indexing
+
+### Cross-Chain Features
+
+1. **Portfolio Aggregation** - Balances across all chains
+2. **Bridge Detection** - Correlate lock/mint events
+3. **Multi-Chain Analytics** - Compare activity across chains
+
+### Monitoring (Multi-Chain)
+
+```prometheus
+indexer_blocks_ingested_total{chain="ethereum"} 18.2M
+indexer_blocks_ingested_total{chain="polygon"} 50.0M
+indexer_block_lag_seconds{chain="ethereum"} 15
+indexer_block_lag_seconds{chain="arbitrum"} 5
+```
+
+---
+
 ## Conclusion
 
-This technical specification provides a comprehensive blueprint for building a **production-grade blockchain indexer** with:
+This technical specification provides a comprehensive blueprint for building a **production-grade, multi-chain blockchain indexer** with:
 
 - **High performance**: 100+ blocks/sec ingestion, <500ms API latency
+- **Multi-chain native**: Independent per-chain ingestion, unified queries
 - **Fault tolerance**: Reorg handling, retries, circuit breakers
 - **Scalability**: Event-driven architecture, horizontal scaling
 - **Observability**: Metrics, traces, dashboards, SLOs
@@ -1018,4 +1143,4 @@ The system is designed with **senior engineering best practices**:
 - Infrastructure as code (Docker, Kubernetes)
 - Security-first approach (auth, rate limiting, validation)
 
-**Ready for production deployment** with all the tooling needed for operations, monitoring, and continuous improvement.
+**Ready for production deployment** with native multi-chain support similar to Blockscan, but self-hosted with full control.

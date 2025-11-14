@@ -1,76 +1,62 @@
 # Blockchain Indexer
 
-A high-performance, multi-chain blockchain indexer with native support for Ethereum, Polygon, Arbitrum, Optimism, and more.
+A production-grade, multi-chain blockchain indexer that ingests, processes, and serves blockchain data with sub-second latency. Built with Go, event-driven architecture, and designed for scale.
 
-## Architecture
+## Features
 
-```
-indexer/
-├── services/
-│   ├── ingester/      # Fetches blocks from blockchain networks
-│   ├── processor/     # Processes and parses blockchain events
-│   └── api/           # REST API and WebSocket server
-├── shared/            # Shared Go packages (models, utils)
-├── database/          # SQL migrations and schemas
-├── infrastructure/    # Docker, Kubernetes configs
-├── monitoring/        # Prometheus, Grafana configs
-└── docs/              # Documentation
-```
+- 🌐 **Multi-chain**: Ethereum, Polygon, Arbitrum, Optimism, Base (5 chains, easily extensible)
+- ⚡ **Real-time**: <30s lag, WebSocket streaming
+- 🔍 **Queryable**: REST API for blocks, transactions, events, cross-chain queries
+- 🔄 **Resilient**: Automatic reorg handling, fault tolerance, retries
+- 📊 **Observable**: Prometheus metrics, Grafana dashboards, distributed tracing
+- 🚀 **Scalable**: Event-driven, horizontally scalable services
 
 ## Quick Start
 
-### Prerequisites
-- Go 1.21+
-- Docker & Docker Compose
-- PostgreSQL 15+
-- Kafka or RabbitMQ
-- Redis
-
-### Development Setup
-
 ```bash
-# Start dependencies
-docker-compose up -d postgres redis kafka
+# 1. Start infrastructure (PostgreSQL, Redis, Kafka)
+make docker-up
 
-# Run database migrations
+# 2. Run database migrations
 make migrate
 
-# Start services
+# 3. Start services (coming soon)
 make run-ingester
 make run-processor
 make run-api
 ```
 
-## Services
+**Prerequisites**: Docker Desktop, Go 1.21+  
+**Full setup guide**: See [Learning Guide](./docs/LEARNING_GUIDE.md#prerequisites--installation)
 
-### Ingester
-Subscribes to blockchain networks, fetches blocks and transactions, publishes to message broker.
+## Architecture
 
-### Processor
-Consumes messages, parses events (ERC20, ERC721, custom), writes to database.
+```
+Blockchain → Ingester → Kafka → Processor → PostgreSQL → API → Users
+                                              ↓
+                                           Redis Cache
+```
 
-### API
-Serves blockchain data via REST and WebSocket with caching and rate limiting.
-
-## Features
-
-- ✅ Multi-chain support (Ethereum, Polygon, Arbitrum, Optimism, Base)
-- ✅ Real-time indexing with <30s lag
-- ✅ Cross-chain queries
-- ✅ Event parsing (ERC20, ERC721)
-- ✅ Automatic reorg handling
-- ✅ Comprehensive observability (Prometheus, Grafana, Jaeger)
-- ✅ Horizontal scaling
-- ✅ Production-ready with fault tolerance
+**Services**: Ingester (fetch blocks) → Processor (parse events) → API (serve data)  
+**Stack**: Go, PostgreSQL (partitioned), Kafka, Redis, Docker  
+**Details**: See [Technical Spec](./docs/TECHNICAL_SPEC.md)
 
 ## Documentation
 
-- [Business Specification](./BUSINESS_SPEC.md)
-- [Technical Specification](./TECHNICAL_SPEC.md)
-- [Multi-Chain Support](./MULTICHAIN_SPEC.md)
-- [Language Choice](./LANGUAGE_CHOICE.md)
-- [Learning Guide & Interview Prep](./LEARNING_GUIDE.md) 📚
-- [API Documentation](./docs/API.md)
+| Doc | Purpose |
+|-----|---------|
+| **[Learning Guide](./docs/LEARNING_GUIDE.md)** | 📚 **Start here** - Setup, implementation log, decisions, interview prep |
+| [Technical Spec](./docs/TECHNICAL_SPEC.md) | Architecture, algorithms, multi-chain design |
+| [Business Spec](./docs/BUSINESS_SPEC.md) | Requirements, KPIs, use cases |
+
+## Project Status
+
+**Phase 1: Infrastructure** ✅ Complete  
+**Phase 2: Ingester Service** 🔄 Next  
+**Phase 3: Processor Service** 📋 Planned  
+**Phase 4: API Service** 📋 Planned
+
+See [Learning Guide](./docs/LEARNING_GUIDE.md#implementation-progress-tracker) for detailed progress.
 
 ## License
 
