@@ -73,10 +73,28 @@ Blockchain → Ingester → Kafka → Processor → PostgreSQL → API → Users
 
 ## Project Status
 
-**Phase 1: Infrastructure** ✅ Complete  
-**Phase 2: Ingester Service** 🔄 Next  
-**Phase 3: Processor Service** 📋 Planned  
-**Phase 4: API Service** 📋 Planned
+**Phase 1: Infrastructure** ✅ Complete (Docker, PostgreSQL, migrations, schema validation)  
+**Phase 2: Ingester Service** ✅ Complete (Multi-chain, WebSocket, checkpoints)  
+**Phase 3: API Service** ✅ Complete (REST endpoints, documentation, health checks)  
+**Phase 4: Web UI** 🔄 **Next** - Block explorer interface  
+**Phase 5: Advanced Features** 📋 Planned (Event parsing, reorg handling, monitoring)
+
+### Quick Test
+
+```bash
+# Terminal 1: Start infrastructure
+make docker-up && make migrate
+
+# Terminal 2: Start ingester (needs RPC URL)
+export ETH_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
+make run-ingester
+
+# Terminal 3: Start API
+make run-api
+
+# Visit: http://localhost:8000/docs
+# Test: curl http://localhost:8000/api/v1/chains
+```
 
 See [Learning Guide](./docs/LEARNING_GUIDE.md#implementation-progress-tracker) for detailed progress.
 
