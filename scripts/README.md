@@ -2,38 +2,43 @@
 
 Scripts to explore and validate blockchain RPC data before implementing the indexer.
 
-## Setup
+## Quick Start (2 minutes)
 
-1. Get a free RPC API key:
-   - Alchemy: https://www.alchemy.com/
-   - Infura: https://infura.io/
-   - QuickNode: https://www.quicknode.com/
+### 1. Get a Free API Key
+Choose one provider and sign up (takes 2 minutes):
+- **Alchemy** (recommended): https://www.alchemy.com/
+  - Sign up → Create App → Select "Ethereum Mainnet" → Copy API Key
+- **Infura**: https://infura.io/
+- **QuickNode**: https://www.quicknode.com/
 
-2. Set environment variable:
-   ```bash
-   export ETH_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY"
-   ```
-
-3. Install dependencies:
-   ```bash
-   cd scripts
-   go mod download
-   ```
-
-## Run Exploration
-
+### 2. Set Environment Variable
 ```bash
-# Explore latest blocks and transactions
-go run explore_rpc.go
-
-# This will:
-# - Connect to Ethereum mainnet
-# - Fetch latest block info
-# - Explore recent transactions
-# - Extract function signatures
-# - Show event logs
-# - Test internal transaction tracing
+# Replace YOUR_API_KEY with your actual key
+export ETH_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY"
 ```
+
+**Note**: You only need `ETH_RPC_URL` - no other environment variables required!
+
+### 3. Run Exploration
+```bash
+# From the project root
+make explore-rpc
+
+# Or directly from scripts folder
+cd scripts
+go run explore_rpc.go
+```
+
+## What It Does
+
+The script connects to Ethereum mainnet and:
+- ✅ Fetches latest block info (validates block schema)
+- ✅ Explores recent transactions (validates transaction schema)
+- ✅ Extracts function signatures (validates our protocol_signatures)
+- ✅ Shows event logs (validates event schema)
+- ✅ Tests internal transaction tracing (checks RPC capabilities)
+
+**Duration**: ~10-30 seconds depending on RPC provider
 
 ## What to Look For
 
@@ -78,6 +83,34 @@ Logs/Events: 3
 
 🔍 === INTERNAL TRANSACTION TRACING ===
 ⚠️  Testing trace methods...
+```
+
+## Troubleshooting
+
+### "ETH_RPC_URL not set"
+```bash
+# Make sure you exported the variable in your current terminal
+export ETH_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY"
+
+# Verify it's set
+echo $ETH_RPC_URL
+```
+
+### "Failed to connect to Ethereum client"
+- **Check your API key**: Make sure you copied it correctly
+- **Check URL format**: Should be `https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY`
+- **Rate limit**: Free tier has limits, wait a minute and try again
+- **Network issues**: Try `curl $ETH_RPC_URL` to test connectivity
+
+### "Transaction not found" or "Block not found"
+- The script uses block 18500000 which might be pruned
+- Edit `explore_rpc.go` line 105: Change `blockNumber := big.NewInt(18500000)` to a more recent block
+- Find recent blocks at: https://etherscan.io/
+
+### Missing go-ethereum packages
+```bash
+cd scripts
+go mod tidy
 ```
 
 ## Findings Template

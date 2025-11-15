@@ -48,6 +48,7 @@ Blockchain → Ingester → Kafka → Processor → PostgreSQL → API → Users
 | **[Learning Guide](./docs/LEARNING_GUIDE.md)** | 📚 **Start here** - Setup, implementation log, decisions, interview prep |
 | [Technical Spec](./docs/TECHNICAL_SPEC.md) | Architecture, algorithms, multi-chain design |
 | [Business Spec](./docs/BUSINESS_SPEC.md) | Requirements, KPIs, use cases |
+| [Chain Support Strategy](./docs/CHAIN_SUPPORT.md) | ⛓️ Which chains to support, priorities, cost analysis |
 
 ## Project Status
 
