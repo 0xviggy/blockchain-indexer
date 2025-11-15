@@ -20,7 +20,11 @@ make docker-up
 # 2. Run database migrations
 make migrate
 
-# 3. Start services (coming soon)
+# 3. Explore RPC data and validate schemas
+export ETH_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
+make explore-rpc
+
+# 4. Start services (coming soon)
 make run-ingester
 make run-processor
 make run-api
@@ -28,6 +32,23 @@ make run-api
 
 **Prerequisites**: Docker Desktop, Go 1.21+  
 **Full setup guide**: See [Learning Guide](./docs/LEARNING_GUIDE.md#prerequisites--installation)
+
+### Multi-Chain Signature Analysis
+
+Discover unknown function signatures across any EVM chain:
+
+```bash
+# Set RPC URLs for chains you want to analyze
+export ETH_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
+export POLYGON_RPC_URL="https://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY"
+
+# Run analysis (scans last 10 blocks, ~500-1000 transactions)
+make explore-rpc
+```
+
+**Output**: Statistics on signature coverage, top unknown functions with 4byte.directory lookup links  
+**Use case**: Before launching on a new chain, discover which protocols are popular  
+**Details**: See [Multi-Block Analysis Guide](./docs/LEARNING_GUIDE.md#how-to-recreate-multi-block-signature-analysis)
 
 ## Architecture
 

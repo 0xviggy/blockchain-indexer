@@ -31,36 +31,77 @@ go run explore_rpc.go
 
 ## What It Does
 
-The script connects to Ethereum mainnet and:
+The script connects to configured chains and performs:
+
+### Phase 1: Schema Validation
 - ✅ Fetches latest block info (validates block schema)
-- ✅ Explores recent transactions (validates transaction schema)
-- ✅ Extracts function signatures (validates our protocol_signatures)
+- ✅ Explores sample transactions (validates transaction schema)
 - ✅ Shows event logs (validates event schema)
 - ✅ Tests internal transaction tracing (checks RPC capabilities)
 
-**Duration**: ~10-30 seconds depending on RPC provider
+### Phase 2: Multi-Block Signature Analysis (NEW!)
+- 📊 Scans last **10 blocks** (~500-1000 transactions)
+- 🔍 Extracts all function signatures from calldata
+- 📈 Generates frequency statistics
+- ❓ Identifies **unknown signatures** with lookup links
+- 🎯 Helps discover which protocols are most active on the chain
+
+**Duration**: ~30-60 seconds depending on RPC provider and chain activity
+
+### Sample Output
+
+```
+📊 === SIGNATURE ANALYSIS ACROSS MULTIPLE BLOCKS ===
+
+📈 Statistics:
+  Total transactions: 616
+  With calldata: 439 (71.3%)
+  Unique signatures: 119
+  Unknown signatures: 110
+
+🔥 Top 10 Most Common Signatures:
+  1. 0xa9059cbb - 152 calls ✅
+      transfer (ERC20)
+  2. 0x78e111f6 - 43 calls ❌ UNKNOWN
+  3. 0x095ea7b3 - 19 calls ✅
+      approve (ERC20)
+  ...
+
+❓ Unknown Signatures Found (add these to database):
+-- Signature: 0x78e111f6
+--   Found in: 43 transactions
+--   Example tx: 0x459163ce...
+--   Lookup: https://www.4byte.directory/signatures/?bytes4_signature=0x78e111f6
+```
 
 ## What to Look For
 
-### ✅ Validate Function Signatures
+### ✅ Schema Validation
 - Confirm 4-byte selectors match our protocol_signatures table
-- Find popular functions we're missing
-- Check data encoding formats
-
-### ✅ Test Event Parsing
 - Verify ERC20/ERC721 event structures
-- Check indexed vs non-indexed parameters
-- Confirm JSONB storage will work
-
-### ✅ Internal Transactions
+- Validate data types handle real-world sizes (gas, value, etc.)
 - Test which trace methods the RPC supports
-- See actual internal tx structure
-- Validate our internal_transactions schema
 
-### ✅ Revert Reasons
-- Test extraction on failed transactions
-- Check error message formats
-- Validate revert_reasons schema
+### 🔍 Protocol Discovery (Multi-Block Analysis)
+- **High-volume unknowns (>50 calls)**: Critical protocols to add immediately
+- **Medium-volume (10-50 calls)**: Important protocols worth researching
+- **Low-volume (1-5 calls)**: Likely proprietary contracts, can skip
+- **Signature patterns**: Identify protocol families (DEX, bridges, forwarders)
+
+### 📊 Use Cases
+
+#### Before Launching on New Chain
+```bash
+export ARBITRUM_RPC_URL="https://arb1.arbitrum.io/rpc"
+make explore-rpc
+```
+Review to understand which protocols dominate the chain.
+
+#### Monthly Protocol Discovery
+Re-scan to catch emerging protocols and update signature registry.
+
+#### Pre-Production Validation
+Verify schemas match actual blockchain data before deploying services
 
 ## Expected Output
 
@@ -113,35 +154,110 @@ cd scripts
 go mod tidy
 ```
 
-## Findings Template
+## Multi-Chain Support
 
-After running, document findings in LEARNING_GUIDE.md:
+### Adding New Chains
 
-```markdown
-## RPC Exploration Findings (Date: YYYY-MM-DD)
+Edit `explore_rpc.go` and add to `SupportedChains`:
 
-### Function Signatures Validated:
-- ✅ Uniswap V2 swaps: 0x38ed1739
-- ✅ ERC20 transfer: 0xa9059cbb
-- ❌ Missing: [list any we found but don't have]
-
-### RPC Provider Capabilities:
-- ✅ Standard eth_* methods: Supported
-- ✅ eth_getTransactionReceipt: Supported
-- ❌ debug_traceTransaction: Not supported (requires archive node)
-- ✅ trace_transaction: Supported (Erigon)
-
-### Schema Validations:
-- ✅ Block schema: All fields present
-- ✅ Transaction schema: Matches receipts
-- ✅ Event schema: Topics structure correct
-- ⚠️  Internal txs: Need archive node or different RPC
-
-### Action Items:
-1. Add missing function signatures to migration
-2. Use trace_transaction instead of debug_traceTransaction
-3. Update internal_transactions extraction strategy
+```go
+var SupportedChains = []ChainConfig{
+    // ... existing chains
+    {
+        ChainID: 56,
+        Name:    "BSC",
+        EnvVar:  "BSC_RPC_URL",
+        ExampleRPCURL: os.Getenv("BSC_RPC_URL"),
+    },
+}
 ```
+
+Then set the environment variable:
+```bash
+export BSC_RPC_URL="https://bsc-dataseed.binance.org/"
+make explore-rpc
+```
+
+### Chain-Specific Sampling Strategies
+
+**Ethereum** (high diversity):
+- Sample 10-20 blocks
+- Expect 100-200 unique signatures
+
+**L2s** (Arbitrum, Optimism, Base):
+- Sample 20-50 blocks (faster block times)
+- Similar protocols to Ethereum
+
+**Alt-L1s** (Polygon, BSC):
+- Sample 10-20 blocks
+- Expect different protocol mix (more gaming, different DEXs)
+
+## Workflow: From Discovery to Database
+
+### Step 1: Run Analysis
+```bash
+export ETH_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
+make explore-rpc
+```
+
+### Step 2: Research Unknown Signatures
+
+For high-volume unknowns (>10 calls):
+1. Click the 4byte.directory link in output
+2. Look up example transaction on Etherscan
+3. Identify the protocol name
+4. Find the ABI (Etherscan, GitHub, Sourcify)
+
+### Step 3: Update Database
+
+Add to `database/migrations/002_add_calldata_parsing.sql`:
+```sql
+INSERT INTO protocol_signatures (signature, function_name, protocol, abi, description) VALUES
+    ('0x78e111f6', 'executeFFsYo', 'forwarder',
+     'executeFFsYo(address,bytes)',
+     'Meta-transaction forwarder (43 calls discovered)');
+```
+
+### Step 4: Update Exploration Script
+
+Add to `scripts/explore_rpc.go`:
+
+**In `isKnownSignature()`:**
+```go
+"0x78e111f6": true,
+```
+
+**In `getSignatureName()`:**
+```go
+"0x78e111f6": "executeFFsYo (Meta-tx Forwarder)",
+```
+
+### Step 5: Commit and Document
+
+```bash
+git add -A
+git commit -m "feat: Add meta-transaction forwarder signatures
+
+- Discovered via multi-block analysis (43 calls in sample)
+- Added executeFFsYo and related forwarder functions"
+git push origin main
+```
+
+Update LEARNING_GUIDE.md with findings.
+
+## Priority Guidelines
+
+**Volume-Based Priorities**:
+- **>50 calls**: 🔴 Critical - Add immediately with full ABI
+- **10-50 calls**: 🟡 High - Research and add within a week
+- **5-10 calls**: 🟢 Medium - Add if easily identifiable
+- **1-5 calls**: ⚪ Low - Likely proprietary, skip unless recurring
+
+**Protocol Type Priorities**:
+- **DEX aggregators** (1inch, CoW, Paraswap): High
+- **Bridges** (LayerZero, Across, Stargate): High
+- **Meta-tx forwarders** (Biconomy, GSN): Medium
+- **Proprietary contracts**: Low
 
 ## Next Steps
 

@@ -111,6 +111,191 @@ This document captures all setup steps, learning points, architectural decisions
 - Focus on high-volume unknowns (10+ calls) for database inclusion
 - Low-volume signatures (1-2 calls) are likely proprietary contracts and can be parsed generically
 
+---
+
+### 🔄 How to Recreate Multi-Block Signature Analysis
+
+This section documents the complete workflow to run signature analysis on any EVM chain.
+
+#### Prerequisites
+1. **RPC URL** for the target chain (archive node NOT required for signature analysis)
+2. **Chain configured** in `scripts/explore_rpc.go` `SupportedChains` array
+3. **Environment variable** set (e.g., `ETH_RPC_URL`, `POLYGON_RPC_URL`, etc.)
+
+#### Step 1: Configure Target Chain(s)
+
+Edit `scripts/explore_rpc.go` to add your chain if not already present:
+
+```go
+var SupportedChains = []ChainConfig{
+    {
+        ChainID: 1,
+        Name:    "Ethereum",
+        EnvVar:  "ETH_RPC_URL",
+        ExampleRPCURL: os.Getenv("ETH_RPC_URL"),
+    },
+    {
+        ChainID: 137,
+        Name:    "Polygon",
+        EnvVar:  "POLYGON_RPC_URL",
+        ExampleRPCURL: os.Getenv("POLYGON_RPC_URL"),
+    },
+    // Add more chains...
+}
+```
+
+#### Step 2: Set Environment Variables
+
+Create or update `.env.local`:
+
+```bash
+# For Ethereum
+export ETH_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
+
+# For Polygon
+export POLYGON_RPC_URL="https://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY"
+
+# For Arbitrum
+export ARBITRUM_RPC_URL="https://arb-mainnet.g.alchemy.com/v2/YOUR_KEY"
+
+# ... etc
+```
+
+Then load them:
+```bash
+source .env.local
+```
+
+#### Step 3: Run the Analysis
+
+```bash
+make explore-rpc
+```
+
+This will:
+1. Connect to all configured chains (with valid RPC URLs)
+2. Fetch the latest 10 blocks from each chain
+3. Extract all function signatures from transaction calldata
+4. Compare against known signature registry
+5. Report statistics and unknown signatures
+
+#### Step 4: Analyze Output
+
+The script outputs:
+- **Statistics**: Total transactions, calldata coverage, unique signatures
+- **Top 10 signatures**: By call frequency with known/unknown status
+- **Unknown signatures list**: With example transaction hashes and 4byte.directory lookup URLs
+
+Example output:
+```
+📈 Statistics:
+  Total transactions: 616
+  With calldata: 439 (71.3%)
+  Unique signatures: 119
+  Unknown signatures: 110
+
+🔥 Top 10 Most Common Signatures:
+  1. 0xa9059cbb - 152 calls ✅
+      transfer (ERC20)
+  2. 0x78e111f6 - 43 calls ❌ UNKNOWN
+  ...
+```
+
+#### Step 5: Research Unknown Signatures
+
+For each high-volume unknown (>10 calls):
+
+1. **Click the 4byte.directory link** provided in output:
+   ```
+   https://www.4byte.directory/signatures/?bytes4_signature=0x78e111f6
+   ```
+
+2. **Look up the transaction** on block explorer (Etherscan, etc.):
+   ```
+   Example tx: 0xabc123...
+   ```
+
+3. **Identify the protocol**: Check the `to` address and contract name
+
+4. **Find the ABI**: 
+   - Check Etherscan's contract page
+   - Search GitHub for the protocol
+   - Use Sourcify or other ABI databases
+
+#### Step 6: Update Database Migration
+
+Add discovered signatures to `database/migrations/002_add_calldata_parsing.sql`:
+
+```sql
+INSERT INTO protocol_signatures (signature, function_name, protocol, abi, description) VALUES
+    ('0x78e111f6', 'executeFFsYo', 'forwarder',
+     'executeFFsYo(address,bytes)',
+     'Meta-transaction forwarder (43 calls in sample)');
+```
+
+#### Step 7: Update Exploration Script
+
+Add to `scripts/explore_rpc.go` in both functions:
+
+**In `isKnownSignature()`:**
+```go
+signatures := map[string]bool{
+    // ... existing
+    "0x78e111f6": true, // New signature
+}
+```
+
+**In `getSignatureName()`:**
+```go
+signatures := map[string]string{
+    // ... existing
+    "0x78e111f6": "executeFFsYo (Meta-tx Forwarder)",
+}
+```
+
+#### Step 8: Commit and Document
+
+```bash
+git add -A
+git commit -m "feat: Add [PROTOCOL_NAME] signatures from multi-block analysis
+
+- Discovered X new signatures across Y blocks
+- Added high-volume signatures: 0xXXXXXXXX (N calls)
+- Updated protocol registry with ABIs"
+
+git push origin main
+```
+
+Update this learning guide with findings in Phase 2.X sections.
+
+---
+
+#### Multi-Chain Analysis Best Practices
+
+**Sampling Strategy**:
+- **Latest 10 blocks**: Good for current protocol landscape (~500-1000 transactions)
+- **Random historical blocks**: Sample different time periods to catch older protocols
+- **High-activity periods**: Sample during DeFi summer, NFT mints, etc.
+
+**Chain-Specific Considerations**:
+- **Ethereum**: Highest protocol diversity, sample more blocks (10-20)
+- **L2s (Arbitrum, Optimism)**: Similar protocols to Ethereum but faster blocks, sample 20-50
+- **Polygon**: More gaming/NFT activity, different protocol mix
+- **BSC**: More trading bots, different DEX landscape
+
+**Volume Thresholds**:
+- **>50 calls**: Critical - Add immediately with full ABI
+- **10-50 calls**: High priority - Research and add
+- **5-10 calls**: Medium priority - Add if easily identifiable
+- **1-5 calls**: Low priority - Track but don't spend time researching (likely proprietary)
+
+**Iteration Frequency**:
+- **Weekly**: Run analysis on new chains before launch
+- **Monthly**: Re-scan existing chains for emerging protocols
+- **On-demand**: When seeing high volumes of decode failures in production
+
+---
+
 ### 📋 Phase 3: Processor Service (Planned)
 - [ ] Kafka consumer setup
 - [ ] Event parsing (ERC20, ERC721)
