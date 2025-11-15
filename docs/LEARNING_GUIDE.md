@@ -46,14 +46,23 @@ This document captures all setup steps, learning points, architectural decisions
 - [x] Revert reasons extraction table
 - [x] Protocol signatures registry (Uniswap, LayerZero, 1inch, etc.)
 - [x] Analytics views for transaction insights
+- [x] RPC validation against real blockchain data
 
 **What we built**: Extended the database to capture not just events, but also:
 - **Parsed calldata**: Decode function calls to understand user intent (swaps, bridges, etc.)
 - **Internal transactions**: Track contract-to-contract calls within transactions
 - **Revert reasons**: Capture why transactions fail
-- **Protocol registry**: Pre-populated with 12+ common protocols (Uniswap V2/V3, LayerZero, Seaport, Across, Stargate, 1inch, Curve, Aave)
+- **Protocol registry**: Pre-populated with 20+ common protocols
 
-**Files Created**: `database/migrations/002_add_calldata_parsing.sql` (300+ lines)
+**Files Created**: `database/migrations/002_add_calldata_parsing.sql` (330+ lines)
+
+**RPC Validation Findings** (Nov 15, 2025):
+- ✅ Tested against Ethereum mainnet block 18,500,000 (157 transactions)
+- ✅ All schema fields match actual RPC data structure
+- ✅ Found and added missing signatures: Uniswap Universal Router (0x3593564c - very common!), Metamask Router, CoW Protocol, Permit2
+- ✅ Verified ERC20 Transfer events parse correctly
+- ✅ Gas prices, data sizes all fit within schema constraints
+- ⚠️  Internal transaction tracing requires archive node (expected)
 
 ### 📋 Phase 3: Processor Service (Planned)
 - [ ] Kafka consumer setup

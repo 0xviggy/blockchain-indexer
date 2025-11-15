@@ -191,7 +191,30 @@ INSERT INTO protocol_signatures (signature, function_name, protocol, abi, descri
      'Supply assets to Aave'),
     ('0x69328dec', 'withdraw', 'aave-v3',
      'withdraw(address,uint256,address)',
-     'Withdraw from Aave');
+     'Withdraw from Aave'),
+    
+    -- Uniswap Universal Router (V3+)
+    ('0x3593564c', 'execute', 'uniswap-universal',
+     'execute(bytes,bytes[],uint256)',
+     'Execute commands on Universal Router'),
+    ('0x24856bc3', 'execute', 'uniswap-universal',
+     'execute(bytes,bytes[])',
+     'Execute commands without deadline'),
+    
+    -- Permit2 (Token approvals)
+    ('0x30f28b7a', 'permit', 'permit2',
+     'permit(address,((address,uint160,uint48,uint48),address,uint256),bytes)',
+     'Permit token spending'),
+    
+    -- CoW Protocol
+    ('0x13d79a0b', 'settle', 'cowswap',
+     'settle(bytes,bytes[],bytes[])',
+     'Settle CoW swap order'),
+    
+    -- Metamask Swap Router
+    ('0xa08edebc', 'swap', 'metamask-router',
+     'swap(address,address,uint256,uint256,address,bytes)',
+     'Metamask aggregator swap');
 
 -- ============================================================================
 -- VIEWS

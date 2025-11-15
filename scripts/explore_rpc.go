@@ -366,22 +366,33 @@ func getSender(tx *types.Transaction) string {
 
 func checkKnownSignature(sig string) {
 	signatures := map[string]string{
+		// Uniswap
 		"0x38ed1739": "swapExactTokensForTokens (Uniswap V2)",
 		"0x7ff36ab5": "swapExactETHForTokens (Uniswap V2)",
 		"0x18cbafe5": "swapExactTokensForETH (Uniswap V2)",
 		"0x414bf389": "exactInputSingle (Uniswap V3)",
 		"0xc04b8d59": "exactInput (Uniswap V3)",
+		"0x3593564c": "execute (Uniswap Universal Router)",
+		"0x24856bc3": "execute (Uniswap Universal Router, no deadline)",
+		// ERC20
 		"0xa9059cbb": "transfer (ERC20)",
 		"0x23b872dd": "transferFrom (ERC20)",
 		"0x095ea7b3": "approve (ERC20)",
+		// ERC721
 		"0x42842e0e": "safeTransferFrom (ERC721)",
+		// Bridges
 		"0x1a0a6e":   "send (LayerZero)",
 		"0x3687011a": "deposit (Across Bridge)",
 		"0x0f5287b0": "swap (Stargate)",
+		// DEX Aggregators
 		"0x7c025200": "swap (1inch)",
+		"0xa08edebc": "swap (Metamask Router)",
+		"0x13d79a0b": "settle (CoW Protocol)",
+		// Other DeFi
 		"0x3df02124": "exchange (Curve)",
 		"0xe8eda9df": "supply (Aave V3)",
 		"0x69328dec": "withdraw (Aave V3)",
+		"0x30f28b7a": "permit (Permit2)",
 	}
 
 	if name, ok := signatures[sig]; ok {
