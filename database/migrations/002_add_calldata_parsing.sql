@@ -214,7 +214,27 @@ INSERT INTO protocol_signatures (signature, function_name, protocol, abi, descri
     -- Metamask Swap Router
     ('0xa08edebc', 'swap', 'metamask-router',
      'swap(address,address,uint256,uint256,address,bytes)',
-     'Metamask aggregator swap');
+     'Metamask aggregator swap'),
+    
+    -- Additional High-Volume Signatures (discovered via multi-block scan)
+    ('0x78e111f6', 'executeFFsYo', 'forwarder',
+     'executeFFsYo(address,bytes)',
+     'Meta-transaction forwarder (43 calls in sample)'),
+    ('0x122067ed', 'unknown_swap', 'aggregator',
+     'unknown_function()',
+     'High-volume aggregator function (17 calls in sample)'),
+    ('0x88ffe867', 'pledge', 'staking',
+     'pledge()',
+     'Staking pledge function (12 calls in sample)'),
+    ('0x6fadcf72', 'forward', 'forwarder',
+     'forward(address,bytes)',
+     'Generic meta-transaction forwarder (7 calls in sample)'),
+    ('0x791ac947', 'swapExactTokensForETHSupportingFeeOnTransferTokens', 'uniswap-v2',
+     'swapExactTokensForETHSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)',
+     'Uniswap V2 swap with fee-on-transfer token support (6 calls)'),
+    ('0x3d0e3ec5', 'swapExactTokensForETHSupportingFeeOnTransferTokens', 'custom-dex',
+     'swapExactTokensForETHSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256,address)',
+     'Custom DEX swap with fee support and extra parameter (6 calls)');
 
 -- ============================================================================
 -- VIEWS

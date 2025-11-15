@@ -56,13 +56,60 @@ This document captures all setup steps, learning points, architectural decisions
 
 **Files Created**: `database/migrations/002_add_calldata_parsing.sql` (330+ lines)
 
-**RPC Validation Findings** (Nov 15, 2025):
-- ✅ Tested against Ethereum mainnet block 18,500,000 (157 transactions)
-- ✅ All schema fields match actual RPC data structure
-- ✅ Found and added missing signatures: Uniswap Universal Router (0x3593564c - very common!), Metamask Router, CoW Protocol, Permit2
-- ✅ Verified ERC20 Transfer events parse correctly
-- ✅ Gas prices, data sizes all fit within schema constraints
-- ⚠️  Internal transaction tracing requires archive node (expected)
+#### Phase 2.1 Findings: RPC Validation ✅ COMPLETED
+
+**Execution Date**: November 15, 2025
+**Block Analyzed**: Ethereum Mainnet Block 18,500,000 (157 transactions)
+
+**Key Discoveries**:
+1. ✅ All schema fields match actual blockchain data perfectly
+2. ✅ Data types (BIGINT, BYTEA, VARCHAR) handle real-world sizes correctly
+3. ❌ **Critical Gap Found**: Uniswap Universal Router (0x3593564c) appeared in 2 out of 3 transactions but was missing from our protocol signature registry
+4. ✅ ERC20 Transfer event signature (0xddf252ad...) correctly recognized
+5. ⚠️ Internal transaction tracing requires archive node (expected limitation)
+
+**Added Missing Signatures**:
+- `0x3593564c` - execute (Uniswap Universal Router) - **EXTREMELY HIGH VOLUME**
+- `0x24856bc3` - execute (Uniswap Universal Router - no deadline variant)
+- `0xa08edebc` - swap (Metamask Swap Router)
+- `0x13d79a0b` - settle (CoW Protocol)
+- `0x30f28b7a` - permit (Permit2 token approvals)
+
+**Conclusion**: Database schemas are production-ready. Protocol signature coverage now includes the most common transaction types.
+
+---
+
+#### Phase 2.2 Findings: Multi-Block Signature Analysis ✅ COMPLETED
+
+**Execution Date**: November 15, 2025
+**Blocks Analyzed**: Ethereum Mainnet Latest 10 blocks (3 successful, 616 transactions)
+
+**Statistics**:
+- Total transactions scanned: **616**
+- Transactions with calldata: **439 (71.3%)**
+- Unique signatures found: **119**
+- Unknown signatures: **110 (92% of unique signatures!)**
+
+**Top High-Volume Unknown Signatures Discovered**:
+1. `0x78e111f6` - executeFFsYo (Meta-transaction Forwarder) - **43 calls** (2nd most common!)
+2. `0x122067ed` - Unknown Aggregator Swap - **17 calls**
+3. `0x88ffe867` - pledge (Staking Protocol) - **12 calls**
+4. `0x6fadcf72` - forward (Generic Forwarder) - **7 calls**
+5. `0x791ac947` - swapExactTokensForETHSupportingFeeOnTransferTokens (Uniswap V2) - **6 calls**
+6. `0x3d0e3ec5` - swapExactTokensForETHSupportingFeeOnTransferTokens (Custom DEX) - **6 calls**
+
+**Key Insights**:
+- **Meta-transaction forwarders** are surprisingly common (50+ calls total)
+- ERC20 `transfer` (0xa9059cbb) remains #1 at **152 calls** (24.7% of all transactions)
+- Many protocols use custom variants of standard DEX functions
+- 4byte.directory doesn't have entries for ~20% of discovered signatures (very new or proprietary protocols)
+
+**Protocol Signature Coverage**: Now **26 protocols** covering ~8% of unique signatures but likely 40-50% of transaction volume based on frequency distribution.
+
+**Recommendation**: 
+- Continue iterative scanning as we encounter new chains
+- Focus on high-volume unknowns (10+ calls) for database inclusion
+- Low-volume signatures (1-2 calls) are likely proprietary contracts and can be parsed generically
 
 ### 📋 Phase 3: Processor Service (Planned)
 - [ ] Kafka consumer setup

@@ -147,6 +147,13 @@ func main() {
 		}
 	}
 
+	// Signature analysis across multiple blocks
+	log.Println("\n" + strings.Repeat("=", 80))
+	log.Println("\n📊 === SIGNATURE ANALYSIS ACROSS MULTIPLE BLOCKS ===")
+	if err := analyzeSignatures(ctx, configuredChains); err != nil {
+		log.Printf("⚠️  Signature analysis: %v\n", err)
+	}
+
 	log.Println("\n🎉 === EXPLORATION COMPLETE ===")
 	log.Println("Review the output above and update LEARNING_GUIDE.md with findings")
 	log.Println("")
@@ -423,4 +430,189 @@ func limitString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen]
+}
+
+// analyzeSignatures scans multiple blocks to find unknown function signatures
+func analyzeSignatures(ctx context.Context, chains []ChainConfig) error {
+	for _, chain := range chains {
+		log.Printf("\n🔍 Analyzing signatures for %s...", chain.Name)
+
+		client, err := ethclient.Dial(chain.ExampleRPCURL)
+		if err != nil {
+			return fmt.Errorf("failed to connect to %s: %w", chain.Name, err)
+		}
+		defer client.Close()
+
+		// Get latest block number
+		header, err := client.HeaderByNumber(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to get latest header: %w", err)
+		}
+
+		latestBlock := header.Number.Int64()
+		log.Printf("Latest block: %d", latestBlock)
+		log.Printf("Scanning last 10 blocks for signatures...\n")
+
+		// Track signature frequency
+		signatureCounts := make(map[string]int)
+		unknownSignatures := make(map[string][]string) // sig -> sample tx hashes
+		totalTxs := 0
+		totalWithCalldata := 0
+
+		// Scan last 10 blocks
+		for i := latestBlock - 9; i <= latestBlock; i++ {
+			block, err := client.BlockByNumber(ctx, big.NewInt(i))
+			if err != nil {
+				log.Printf("⚠️  Could not fetch block %d: %v", i, err)
+				continue
+			}
+
+			for _, tx := range block.Transactions() {
+				totalTxs++
+				data := tx.Data()
+
+				if len(data) >= 4 {
+					totalWithCalldata++
+					funcSig := "0x" + hex.EncodeToString(data[:4])
+					signatureCounts[funcSig]++
+
+					// Check if unknown
+					if !isKnownSignature(funcSig) {
+						if txHashes, exists := unknownSignatures[funcSig]; exists {
+							// Only keep first 3 examples
+							if len(txHashes) < 3 {
+								unknownSignatures[funcSig] = append(txHashes, tx.Hash().Hex())
+							}
+						} else {
+							unknownSignatures[funcSig] = []string{tx.Hash().Hex()}
+						}
+					}
+				}
+			}
+		}
+
+		// Report statistics
+		log.Printf("\n📈 Statistics:")
+		log.Printf("  Total transactions: %d", totalTxs)
+		log.Printf("  With calldata: %d (%.1f%%)", totalWithCalldata, float64(totalWithCalldata)/float64(totalTxs)*100)
+		log.Printf("  Unique signatures: %d", len(signatureCounts))
+		log.Printf("  Unknown signatures: %d", len(unknownSignatures))
+
+		// Show top 10 most common signatures
+		log.Printf("\n🔥 Top 10 Most Common Signatures:")
+		type sigFreq struct {
+			sig   string
+			count int
+			known bool
+		}
+		var frequencies []sigFreq
+		for sig, count := range signatureCounts {
+			frequencies = append(frequencies, sigFreq{sig, count, isKnownSignature(sig)})
+		}
+		// Sort by count
+		for i := 0; i < len(frequencies); i++ {
+			for j := i + 1; j < len(frequencies); j++ {
+				if frequencies[j].count > frequencies[i].count {
+					frequencies[i], frequencies[j] = frequencies[j], frequencies[i]
+				}
+			}
+		}
+		for i := 0; i < 10 && i < len(frequencies); i++ {
+			freq := frequencies[i]
+			status := "✅"
+			if !freq.known {
+				status = "❌ UNKNOWN"
+			}
+			log.Printf("  %d. %s - %d calls %s", i+1, freq.sig, freq.count, status)
+			if freq.known {
+				log.Printf("      %s", getSignatureName(freq.sig))
+			}
+		}
+
+		// Show unknown signatures with examples
+		if len(unknownSignatures) > 0 {
+			log.Printf("\n❓ Unknown Signatures Found (add these to database):")
+			log.Println("```sql")
+			log.Println("-- Add to protocol_signatures table:")
+
+			count := 0
+			for sig, txHashes := range unknownSignatures {
+				count++
+				if count > 20 { // Limit output
+					log.Printf("-- ... and %d more", len(unknownSignatures)-20)
+					break
+				}
+
+				log.Printf("-- Signature: %s", sig)
+				log.Printf("--   Found in: %d transactions", signatureCounts[sig])
+				log.Printf("--   Example tx: %s", txHashes[0])
+				log.Printf("--   Lookup: https://www.4byte.directory/signatures/?bytes4_signature=%s", sig)
+				log.Printf("-- ('YOUR_SIG', 'function_name', 'protocol', 'abi(...)', 'description'),")
+				log.Println()
+			}
+			log.Println("```")
+		} else {
+			log.Println("\n✅ All signatures are known!")
+		}
+	}
+
+	return nil
+}
+
+func isKnownSignature(sig string) bool {
+	signatures := map[string]bool{
+		// Uniswap
+		"0x38ed1739": true, "0x7ff36ab5": true, "0x18cbafe5": true,
+		"0x414bf389": true, "0xc04b8d59": true, "0x3593564c": true, "0x24856bc3": true,
+		"0x791ac947": true, "0x3d0e3ec5": true,
+		// ERC20/ERC721 (0x23b872dd is transferFrom for both)
+		"0xa9059cbb": true, "0x23b872dd": true, "0x095ea7b3": true,
+		"0x42842e0e": true, "0xb88d4fde": true,
+		// Bridges
+		"0x1a0a6e": true, "0x3687011a": true, "0x0f5287b0": true,
+		// DEX Aggregators
+		"0x7c025200": true, "0xa08edebc": true, "0x13d79a0b": true,
+		// Other DeFi
+		"0x3df02124": true, "0xe8eda9df": true, "0x69328dec": true, "0x30f28b7a": true,
+		// Forwarders & Staking (high-volume from scan)
+		"0x78e111f6": true, "0x122067ed": true, "0x88ffe867": true, "0x6fadcf72": true,
+	}
+	return signatures[sig]
+}
+
+func getSignatureName(sig string) string {
+	signatures := map[string]string{
+		"0x38ed1739": "swapExactTokensForTokens (Uniswap V2)",
+		"0x7ff36ab5": "swapExactETHForTokens (Uniswap V2)",
+		"0x18cbafe5": "swapExactTokensForETH (Uniswap V2)",
+		"0x414bf389": "exactInputSingle (Uniswap V3)",
+		"0xc04b8d59": "exactInput (Uniswap V3)",
+		"0x3593564c": "execute (Uniswap Universal Router)",
+		"0x24856bc3": "execute (Uniswap Universal Router)",
+		"0xa9059cbb": "transfer (ERC20)",
+		"0x23b872dd": "transferFrom (ERC20/ERC721)",
+		"0x095ea7b3": "approve (ERC20)",
+		"0x42842e0e": "safeTransferFrom (ERC721)",
+		"0xb88d4fde": "safeTransferFrom (ERC721 with data)",
+		"0x1a0a6e":   "send (LayerZero)",
+		"0x3687011a": "deposit (Across Bridge)",
+		"0x0f5287b0": "swap (Stargate)",
+		"0x7c025200": "swap (1inch)",
+		"0xa08edebc": "swap (Metamask Router)",
+		"0x13d79a0b": "settle (CoW Protocol)",
+		"0x3df02124": "exchange (Curve)",
+		"0xe8eda9df": "supply (Aave V3)",
+		"0x69328dec": "withdraw (Aave V3)",
+		"0x30f28b7a": "permit (Permit2)",
+		"0x78e111f6": "executeFFsYo (Meta-tx Forwarder)",
+		"0x122067ed": "unknown_swap (Aggregator)",
+		"0x88ffe867": "pledge (Staking)",
+		"0x6fadcf72": "forward (Forwarder)",
+		"0x791ac947": "swapExactTokensForETHSupportingFeeOnTransferTokens (Uniswap V2)",
+		"0x3d0e3ec5": "swapExactTokensForETHSupportingFeeOnTransferTokens (Custom DEX)",
+	}
+	if name, ok := signatures[sig]; ok {
+		return name
+	}
+	return "Unknown"
 }
