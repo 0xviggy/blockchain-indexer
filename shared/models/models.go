@@ -83,19 +83,19 @@ type ParsedCalldata struct {
 
 // InternalTransaction represents contract-to-contract calls
 type InternalTransaction struct {
-	ChainID           int       `json:"chain_id" db:"chain_id"`
-	TxHash            string    `json:"tx_hash" db:"tx_hash"`
-	InternalTxIndex   int       `json:"internal_tx_index" db:"internal_tx_index"`
-	CallType          string    `json:"call_type" db:"call_type"`
-	FromAddress       string    `json:"from_address" db:"from_address"`
-	ToAddress         *string   `json:"to_address" db:"to_address"`
-	Value             string    `json:"value" db:"value"`
-	Gas               int64     `json:"gas" db:"gas"`
-	GasUsed           int64     `json:"gas_used" db:"gas_used"`
-	Input             []byte    `json:"input" db:"input"`
-	Output            []byte    `json:"output" db:"output"`
-	Success           bool      `json:"success" db:"success"`
-	CreatedAt         time.Time `json:"created_at" db:"created_at"`
+	ChainID         int       `json:"chain_id" db:"chain_id"`
+	TxHash          string    `json:"tx_hash" db:"tx_hash"`
+	InternalTxIndex int       `json:"internal_tx_index" db:"internal_tx_index"`
+	CallType        string    `json:"call_type" db:"call_type"`
+	FromAddress     string    `json:"from_address" db:"from_address"`
+	ToAddress       *string   `json:"to_address" db:"to_address"`
+	Value           string    `json:"value" db:"value"`
+	Gas             int64     `json:"gas" db:"gas"`
+	GasUsed         int64     `json:"gas_used" db:"gas_used"`
+	Input           []byte    `json:"input" db:"input"`
+	Output          []byte    `json:"output" db:"output"`
+	Success         bool      `json:"success" db:"success"`
+	CreatedAt       time.Time `json:"created_at" db:"created_at"`
 }
 
 // RevertReason stores error messages from failed transactions

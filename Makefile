@@ -21,6 +21,7 @@ help:
 	@echo "  make run-processor   - Start processor service"
 	@echo "  make run-api         - Start API service"
 	@echo "  make test            - Run all tests"
+	@echo "  make explore-rpc     - Explore RPC data and validate schemas"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make redis-cli       - Open Redis CLI"
@@ -110,6 +111,23 @@ run-api:
 
 test:
 	go test ./...
+
+# RPC Exploration
+explore-rpc:
+	@if [ -z "$$ETH_RPC_URL" ]; then \
+		echo "❌ ETH_RPC_URL not set"; \
+		echo ""; \
+		echo "Get a free API key:"; \
+		echo "  - Alchemy: https://www.alchemy.com/"; \
+		echo "  - Infura: https://infura.io/"; \
+		echo ""; \
+		echo "Then run:"; \
+		echo '  export ETH_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY"'; \
+		echo "  make explore-rpc"; \
+		exit 1; \
+	fi
+	@echo "🔍 Exploring RPC data..."
+	cd scripts && go mod download && go run explore_rpc.go
 
 # Cleanup
 clean:
