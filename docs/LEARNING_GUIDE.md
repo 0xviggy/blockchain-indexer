@@ -6,96 +6,870 @@ This document captures all setup steps, learning points, architectural decisions
 
 ---
 
-## 🎯 Technology Stack
+## 🎯 Technology Stack Deep Dive
 
-**Backend**: Go, PostgreSQL (partitioned), Redis, Kafka (Redpanda)  
-**Frontend**: React 18, TypeScript, Vite, Tailwind CSS, React Query, Zustand  
-**Blockchain**: go-ethereum, multi-chain (Ethereum, Polygon, Arbitrum, Optimism, Base)  
-**Infrastructure**: Docker Compose, Makefile, Prometheus/Grafana (planned)
+### Backend Technologies
 
-**Architecture Patterns**:
-- Microservices (Ingester, Processor, API)
-- Event-driven (Kafka streaming)
-- CQRS (write-optimized ingester, read-optimized API)
-- Database partitioning by chain_id
-- Graceful degradation (WebSocket → HTTP fallback)
-- Checkpointing for fault tolerance
+#### Go Programming Language
+**Why Go**: Chosen for blockchain indexing due to excellent concurrency primitives, strong blockchain ecosystem (go-ethereum), and faster development velocity compared to Rust.
+
+**Key Features Used**:
+- **Goroutines**: Lightweight threads for parallel chain processing (one per blockchain)
+- **Channels**: Safe communication between goroutines for block data
+- **Context**: Graceful shutdown and timeout handling across service boundaries
+- **go-ethereum library**: Official Ethereum client for RPC/WebSocket communication
+
+**Example - Parallel Chain Processing**:
+```go
+// Start one goroutine per chain
+for _, chain := range chains {
+    go func(c Chain) {
+        processChain(ctx, c.ChainID, c.RPCURL)
+    }(chain)
+}
+
+// Wait for shutdown signal
+<-ctx.Done()
+```
+
+#### PostgreSQL Database
+**Why PostgreSQL**: ACID guarantees, mature partitioning support, excellent query planner, and wide operational knowledge.
+
+**Key Features Used**:
+- **Table Partitioning**: Partition by `chain_id` for query isolation and parallel writes
+- **JSONB**: Store flexible event data and parsed calldata
+- **Triggers**: Automatic timestamp updates on row changes
+- **Views**: Pre-computed analytics queries for API performance
+- **Foreign Keys**: Data integrity across chains, blocks, transactions
+
+**Partitioning Strategy**:
+```sql
+-- Parent table definition
+CREATE TABLE blocks (
+    chain_id INT NOT NULL,
+    block_number BIGINT NOT NULL,
+    block_hash BYTEA NOT NULL,
+    parent_hash BYTEA NOT NULL,
+    timestamp BIGINT NOT NULL,
+    gas_used BIGINT,
+    gas_limit BIGINT,
+    PRIMARY KEY (chain_id, block_number)
+) PARTITION BY LIST (chain_id);
+
+-- Create partition per chain
+CREATE TABLE blocks_eth PARTITION OF blocks 
+    FOR VALUES IN (1);
+CREATE TABLE blocks_polygon PARTITION OF blocks 
+    FOR VALUES IN (137);
+-- etc.
+```
+
+**Why Partitioning Works**:
+1. Most queries filter by single chain: `WHERE chain_id = 1`
+2. PostgreSQL only scans relevant partition (3x faster)
+3. Parallel writes: Each chain writes to different partition (no lock contention)
+4. Easy maintenance: Drop old chain data without affecting others
+
+#### Redis Cache
+**Why Redis**: Sub-millisecond latency for frequently accessed data, built-in data structures, pub/sub for real-time updates.
+
+**Key Features Used**:
+- **String Cache**: Store serialized blocks/transactions with TTL
+- **Hash Sets**: Cache API responses by endpoint+params
+- **Sorted Sets**: Rate limiting with sliding window
+- **Pub/Sub**: Real-time notifications for new blocks (future)
+
+**Caching Strategy**:
+```go
+// Cache block with 12-second TTL (1 block time)
+key := fmt.Sprintf("block:%d:%s", chainID, blockHash)
+data, _ := json.Marshal(block)
+rdb.Set(ctx, key, data, 12*time.Second)
+
+// Try cache first, fallback to DB
+if cached, err := rdb.Get(ctx, key).Result(); err == nil {
+    json.Unmarshal([]byte(cached), &block)
+    return block, nil
+}
+block = fetchFromDB(chainID, blockHash)
+```
+
+#### Kafka (Redpanda)
+**Why Kafka**: Decouples ingestion from processing, replay capability, scales horizontally, industry standard for event streaming.
+
+**Why Redpanda**: Kafka-compatible but written in C++ (faster), no ZooKeeper dependency (simpler ops), single binary deployment.
+
+**Key Features Used**:
+- **Topics**: Separate streams for raw blocks, parsed events, reorgs
+- **Partitioning**: Partition by chain_id for parallel processing
+- **Consumer Groups**: Multiple processor instances for scaling
+- **Retention**: 7-day retention for replay/debugging
+
+**Topic Design**:
+```yaml
+topics:
+  raw.blocks:
+    partitions: 5  # One per chain
+    partition_key: chain_id
+    retention: 168h  # 7 days
+    
+  parsed.events:
+    partitions: 10  # More for higher throughput
+    partition_key: chain_id
+    retention: 168h
+    
+  system.reorg:
+    partitions: 1  # Order matters for reorgs
+    retention: 720h  # 30 days (important for auditing)
+```
+
+### Frontend Technologies
+
+#### React 18
+**Why React**: Component-based architecture, huge ecosystem, excellent TypeScript support, easy to find developers.
+
+**Key Features Used**:
+- **Hooks**: useState, useEffect for component state
+- **Context**: Share selected chain across components
+- **Suspense**: Loading states for async data
+- **Error Boundaries**: Graceful error handling
+
+#### TypeScript
+**Why TypeScript**: Catch bugs at compile time, better IDE support, safer refactoring, self-documenting code.
+
+**Key Features Used**:
+- **Interfaces**: Define API response shapes
+- **Generics**: Type-safe API client functions
+- **Enums**: Chain IDs, transaction status
+- **Type Guards**: Runtime type checking
+
+**Example - Type-Safe API Client**:
+```typescript
+interface Block {
+    chain_id: number;
+    block_number: number;
+    block_hash: string;
+    timestamp: number;
+    transaction_count: number;
+}
+
+async function getBlocks(chainId: number, limit: number): Promise<Block[]> {
+    const response = await axios.get<Block[]>(
+        `/api/v1/blocks?chain_id=${chainId}&limit=${limit}`
+    );
+    return response.data;
+}
+```
+
+#### Vite
+**Why Vite**: Instant HMR (hot module replacement), faster builds than Webpack, simpler configuration, ESM-native.
+
+**How It Works**:
+- Development: Serves source files as ES modules (no bundling)
+- Production: Rollup bundling with code splitting
+- Plugins: React plugin for JSX transform, TypeScript support
+
+#### React Query (TanStack Query)
+**Why React Query**: Manages server state lifecycle (loading, caching, refetching), automatic background updates, optimistic UI.
+
+**Key Features Used**:
+```typescript
+// Automatic caching and refetching
+const { data: blocks, isLoading, error } = useQuery({
+    queryKey: ['blocks', chainId, limit],
+    queryFn: () => api.getBlocks(chainId, limit),
+    staleTime: 12000,  // 12 seconds (1 block time)
+    refetchInterval: 12000  // Poll for new blocks
+});
+
+// Mutation with optimistic updates
+const mutation = useMutation({
+    mutationFn: api.updateChain,
+    onMutate: async (newChain) => {
+        // Optimistically update UI
+        queryClient.setQueryData(['chains'], (old) => 
+            old.map(c => c.id === newChain.id ? newChain : c)
+        );
+    }
+});
+```
+
+#### Zustand
+**Why Zustand**: Simpler than Redux (no actions/reducers), TypeScript-first, minimal boilerplate, devtools support.
+
+**Key Features Used**:
+```typescript
+interface ChainStore {
+    selectedChainId: number;
+    setChain: (id: number) => void;
+    chains: Chain[];
+    loadChains: () => Promise<void>;
+}
+
+const useChainStore = create<ChainStore>((set) => ({
+    selectedChainId: 1,
+    chains: [],
+    setChain: (id) => set({ selectedChainId: id }),
+    loadChains: async () => {
+        const chains = await api.getChains();
+        set({ chains });
+    }
+}));
+
+// Usage in component
+function ChainSwitcher() {
+    const { selectedChainId, setChain, chains } = useChainStore();
+    return (
+        <select value={selectedChainId} onChange={e => setChain(+e.target.value)}>
+            {chains.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+    );
+}
+```
+
+#### Tailwind CSS
+**Why Tailwind**: Utility-first reduces CSS bloat, dark mode built-in, responsive by default, component libraries available.
+
+**Key Features Used**:
+```tsx
+// Responsive + dark mode
+<div className="
+    bg-white dark:bg-gray-900
+    p-4 md:p-6 lg:p-8
+    rounded-lg shadow-md
+    hover:shadow-xl transition-shadow
+">
+    <h2 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">
+        Block #{block.number}
+    </h2>
+</div>
+```
+
+### Blockchain Technologies
+
+#### go-ethereum (geth)
+**Why go-ethereum**: Official Go implementation, most stable RPC client, used by node operators, extensive documentation.
+
+**Key Features Used**:
+- **RPC Client**: HTTP/WebSocket connections to nodes
+- **Type Definitions**: Block, Transaction, Receipt structs
+- **ABI Encoding**: Parse smart contract calls
+- **Crypto Utilities**: Keccak256 hashing, address checksums
+
+**Example - WebSocket Subscription**:
+```go
+import (
+    "github.com/ethereum/go-ethereum/ethclient"
+    "github.com/ethereum/go-ethereum/core/types"
+)
+
+// Connect via WebSocket
+client, err := ethclient.Dial("wss://eth-mainnet.g.alchemy.com/v2/KEY")
+
+// Subscribe to new block headers
+headers := make(chan *types.Header)
+sub, err := client.SubscribeNewHead(ctx, headers)
+
+for {
+    select {
+    case header := <-headers:
+        // Process new block
+        processBlock(header.Number.Uint64())
+    case err := <-sub.Err():
+        // Reconnect on error
+        log.Printf("Subscription error: %v", err)
+    }
+}
+```
+
+#### Multi-Chain Support
+**EVM Chains Supported**: Ethereum, Polygon, Arbitrum, Optimism, Base
+
+**Why These Chains**:
+- All EVM-compatible (same RPC interface)
+- Combined >$50B TVL
+- Cover L1 (Ethereum) and major L2s
+- Different characteristics: Polygon (gaming/NFTs), Arbitrum (DeFi), Base (social)
+
+**Chain Differences**:
+```go
+type ChainConfig struct {
+    ChainID         int
+    Name            string
+    BlockTime       int  // seconds
+    Confirmations   int  // blocks for finality
+}
+
+var chains = []ChainConfig{
+    {1, "Ethereum", 12, 15},      // Slower, higher security
+    {137, "Polygon", 2, 128},     // Fast, needs more confirmations
+    {42161, "Arbitrum", 0.25, 1}, // Very fast, optimistic rollup
+    {10, "Optimism", 2, 1},       // Fast, optimistic rollup
+    {8453, "Base", 2, 1},         // Fast, optimistic rollup
+}
+```
+
+### Infrastructure & DevOps
+
+#### Docker Compose
+**Why Docker Compose**: Simple local development, multi-container orchestration, easy cleanup, matches production Kubernetes.
+
+**Key Features Used**:
+```yaml
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: indexer
+      POSTGRES_USER: indexer
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: pg_isready -U indexer
+      interval: 10s
+    networks:
+      - indexer-network
+
+networks:
+  indexer-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+```
+
+**Docker Compose vs Kubernetes**:
+- **Development**: Docker Compose (simpler, faster iteration)
+- **Production**: Kubernetes (scaling, self-healing, rolling updates)
+- **CI/CD**: Docker Compose (test environment)
+
+#### Makefile
+**Why Makefile**: Universal task runner, self-documenting commands, shell integration, no additional dependencies.
+
+**Key Targets**:
+```makefile
+.PHONY: docker-up migrate run-ingester run-api
+
+# Start infrastructure
+docker-up:
+	docker compose -f infrastructure/docker/docker-compose.yml up -d
+
+# Run migrations
+migrate:
+	docker exec -i indexer-postgres psql -U indexer -d indexer < database/migrations/001_initial_schema.sql
+	docker exec -i indexer-postgres psql -U indexer -d indexer < database/migrations/002_add_calldata_parsing.sql
+
+# Start services
+run-ingester:
+	cd services/ingester && go run main.go
+
+run-api:
+	cd services/api && go run main.go
+
+# Combined setup
+setup: docker-up
+	@echo "Waiting for PostgreSQL..."
+	@sleep 5
+	$(MAKE) migrate
+	@echo "Setup complete!"
+```
+
+### Architecture Patterns
+
+#### Microservices
+**Why Microservices**: Independent scaling, isolated failures, technology flexibility, easier reasoning about each service.
+
+**Our Services**:
+1. **Ingester**: Fetches blocks from RPC nodes
+2. **Processor**: Parses events and calldata (deferred for MVP)
+3. **API**: Serves data to frontend
+
+**Service Boundaries**:
+```
+Ingester responsibilities:
+- Connect to blockchain nodes
+- Fetch blocks and transactions
+- Handle WebSocket subscriptions
+- Checkpoint management
+- Write to PostgreSQL (MVP) or Kafka (future)
+
+Processor responsibilities (future):
+- Read from Kafka
+- Parse event logs
+- Decode function calls
+- Extract internal transactions
+- Write parsed data to PostgreSQL
+
+API responsibilities:
+- Read from PostgreSQL
+- Cache with Redis
+- Rate limiting
+- Serve REST endpoints
+- WebSocket for real-time updates
+```
+
+#### Event-Driven Architecture
+**Why Event-Driven**: Decoupling, async processing, replay capability, easier to add new consumers.
+
+**Message Flow** (future with Kafka):
+```
+1. Ingester fetches block → publishes to raw.blocks topic
+2. Processor consumes raw.blocks → parses events → publishes to parsed.events
+3. Analytics service consumes parsed.events → updates dashboards
+4. Alert service consumes system.reorg → notifies on-call
+```
+
+**Event Schema Example**:
+```json
+{
+  "event_type": "block.new",
+  "timestamp": 1700000000,
+  "chain_id": 1,
+  "data": {
+    "block_number": 18500000,
+    "block_hash": "0xabc123...",
+    "transaction_count": 157
+  }
+}
+```
+
+#### CQRS (Command Query Responsibility Segregation)
+**Why CQRS**: Optimize writes and reads separately, simpler code, better performance.
+
+**In Our System**:
+- **Command (Write)**: Ingester writes blocks sequentially, atomic transactions
+- **Query (Read)**: API reads with caching, pagination, multiple indexes
+
+```
+Write Model (Ingester):
+- Optimized for sequential inserts
+- Minimal indexes (only primary key)
+- Writes to partitioned tables
+
+Read Model (API):
+- Optimized for various query patterns
+- Multiple indexes (hash, address, timestamp)
+- Materialized views for analytics
+- Redis cache for hot data
+```
+
+#### Database Partitioning
+**Why Partition**: Query performance, parallel operations, easier maintenance.
+
+**Partitioning Strategies**:
+1. **By chain_id** (list partitioning): Each chain in separate partition
+2. **By time** (range partitioning): Archive old data
+3. **By hash** (hash partitioning): Distribute evenly
+
+**Our Choice**: List partitioning by chain_id because:
+- Most queries filter by chain
+- Clear partition boundaries
+- Easy to add new chains
+- Parallel writes (different partitions)
+
+#### Graceful Degradation
+**Why**: System should continue working even when components fail.
+
+**Our Implementations**:
+1. **WebSocket → HTTP Polling**: If WebSocket fails, fall back to polling
+2. **Cache Miss → Database**: If Redis is down, query PostgreSQL
+3. **Multi-RPC**: Try backup RPC if primary fails
+
+```go
+// WebSocket with HTTP fallback
+if wsClient, err := dialWebSocket(url); err == nil {
+    subscribeToBlocks(wsClient)
+} else {
+    log.Printf("WebSocket failed, using HTTP polling: %v", err)
+    pollBlocks(httpClient, 12*time.Second)
+}
+```
+
+#### Checkpointing
+**Why**: Resume processing from last successful point after restart/failure.
+
+**Implementation**:
+```sql
+CREATE TABLE checkpoints (
+    service_name VARCHAR(50) NOT NULL,
+    chain_id INT NOT NULL,
+    last_block BIGINT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (service_name, chain_id)
+);
+```
+
+```go
+// Load checkpoint on startup
+var lastBlock uint64
+err := db.QueryRow(`
+    SELECT last_block FROM checkpoints 
+    WHERE service_name = 'ingester' AND chain_id = $1
+`, chainID).Scan(&lastBlock)
+
+if err == sql.ErrNoRows {
+    lastBlock = genesisBlock  // Start from beginning
+}
+
+// Update checkpoint after each block
+tx.Exec(`
+    INSERT INTO checkpoints (service_name, chain_id, last_block)
+    VALUES ('ingester', $1, $2)
+    ON CONFLICT (service_name, chain_id)
+    DO UPDATE SET last_block = $2, updated_at = CURRENT_TIMESTAMP
+`, chainID, blockNumber)
+```
 
 ---
 
-## 📚 Extended Interview Preparation Topics
+## 📚 Docker & Containerization Deep Dive
 
-### Docker Deep Dive
+### Docker Fundamentals
 
-#### Core Concepts
+#### What is Docker?
+Docker is a platform for building, shipping, and running applications in containers. A container packages an application with all its dependencies into a standardized unit.
+
+**Key Concepts**:
+- **Image**: Blueprint for containers (read-only)
+- **Container**: Running instance of an image (writable layer)
+- **Dockerfile**: Instructions to build an image
+- **Registry**: Storage for images (Docker Hub, GitHub Container Registry)
+
+#### Multi-Stage Builds
+**Problem**: Development images are huge (800MB+ with SDK, tools, cache)  
+**Solution**: Build in one image, copy artifacts to minimal runtime image
+
 ```dockerfile
-# Multi-stage builds for smaller images
+# Stage 1: Build
 FROM golang:1.21 AS builder
 WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
-RUN go build -o service
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o service ./cmd/service
 
+# Stage 2: Runtime
 FROM alpine:latest
-COPY --from=builder /app/service /service
-CMD ["/service"]
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY --from=builder /app/service .
+CMD ["./service"]
 ```
 
-**Interview Questions**:
-- **Q: How do multi-stage builds reduce image size?**
-  - A: First stage compiles with full SDK (~800MB), second stage copies only the binary to minimal Alpine (~5MB base). Final image is <50MB vs >800MB.
-  
-- **Q: What's the difference between CMD and ENTRYPOINT?**
-  - A: `ENTRYPOINT` defines the executable, `CMD` provides default arguments. `ENTRYPOINT` can't be overridden easily, `CMD` can be replaced at runtime.
+**Benefits**:
+- **Size**: 800MB → 15MB (53x smaller)
+- **Security**: No build tools in production image
+- **Speed**: Smaller images = faster deploys
+- **Layers**: Only runtime layer changes on code updates
 
-- **Q: How do you debug a crashed container?**
-  ```bash
-  # View logs even after exit
-  docker logs <container_id>
-  
-  # Inspect exit code
-  docker inspect <container_id> | jq '.[0].State'
-  
-  # Start with shell override
-  docker run -it --entrypoint /bin/sh <image>
-  ```
+**Best Practices**:
+```dockerfile
+# Use specific versions (not :latest)
+FROM golang:1.21.5-alpine AS builder
 
-#### Networking
+# Order layers by change frequency (least → most)
+COPY go.mod go.sum ./        # Changes rarely
+RUN go mod download           # Cached unless go.mod changes
+COPY . .                      # Changes often
+RUN go build ./...            # Only rebuilds if source changes
+
+# Use .dockerignore to exclude unnecessary files
+# .dockerignore:
+# .git
+# *.md
+# tests/
+# .env.local
+```
+
+#### CMD vs ENTRYPOINT
+**CMD**: Default command, can be overridden  
+**ENTRYPOINT**: Always runs, CMD becomes arguments
+
+```dockerfile
+# CMD only (can override entire command)
+CMD ["./service", "--config", "prod.yaml"]
+# Run: docker run myimage ./other-command  ✅ Replaces CMD
+
+# ENTRYPOINT only (always runs this)
+ENTRYPOINT ["./service"]
+# Run: docker run myimage  ✅ Runs ./service
+# Run: docker run myimage --debug  ✅ Runs ./service --debug
+
+# Both (flexible configuration)
+ENTRYPOINT ["./service"]
+CMD ["--config", "prod.yaml"]
+# Run: docker run myimage  → ./service --config prod.yaml
+# Run: docker run myimage --debug  → ./service --debug
+```
+
+**When to Use**:
+- **CMD**: Provide default arguments that users might override
+- **ENTRYPOINT**: Ensure a specific command always runs
+- **Both**: Command in ENTRYPOINT, config in CMD
+
+#### Docker Networking
+
+**Network Types**:
+1. **Bridge** (default): Isolated network with port mapping
+2. **Host**: Share host network stack (no isolation, best performance)
+3. **None**: No networking (maximum security)
+4. **Overlay**: Multi-host networking (Swarm/Kubernetes)
+
 ```yaml
 # Docker Compose network configuration
+services:
+  api:
+    networks:
+      - frontend  # Accessible from outside
+      - backend   # Internal only
+  
+  postgres:
+    networks:
+      - backend   # Not accessible from outside
+
 networks:
   frontend:
     driver: bridge
   backend:
     driver: bridge
-    internal: true  # No external access
+    internal: true  # No internet access, only inter-container
 ```
 
-**Interview Questions**:
-- **Q: How do containers communicate in Docker Compose?**
-  - A: By service name (DNS resolution). `http://postgres:5432` works because Docker Compose creates a network and DNS entries.
-
-- **Q: What's the difference between bridge and host networking?**
-  - **Bridge**: Isolated network with port mapping (default)
-  - **Host**: Shares host's network stack (better performance, less isolation)
-  - **None**: No networking (for security)
-
-#### Volumes
+**How Container Communication Works**:
 ```bash
-# Named volumes (managed by Docker)
+# Docker Compose creates DNS entries for service names
+# Inside api container:
+curl http://postgres:5432  # ✅ DNS resolves to postgres container IP
+
+# Docker Compose also creates network alias
+# Can use service name or container name
+curl http://indexer-postgres:5432  # ✅ Also works
+```
+
+**Port Mapping**:
+```yaml
+services:
+  api:
+    ports:
+      - \"8000:8000\"  # host:container
+      - \"127.0.0.1:8001:8001\"  # Only localhost can access
+      - \"8002\"  # Random host port → container 8002
+```
+
+**Network Inspection**:
+```bash
+# List networks
+docker network ls
+
+# Inspect network
+docker network inspect indexer-network
+
+# See which containers are on network
+docker network inspect indexer-network | jq '.[0].Containers'
+
+# Connect running container to network
+docker network connect indexer-network my-container
+```
+
+#### Docker Volumes
+
+**Volume Types**:
+1. **Named Volumes**: Managed by Docker, best for production
+2. **Bind Mounts**: Mount host directory, best for development
+3. **tmpfs Mounts**: In-memory, best for sensitive temp data
+
+```yaml
+services:
+  postgres:
+    volumes:
+      # Named volume (managed by Docker)
+      - postgres_data:/var/lib/postgresql/data
+      
+      # Bind mount (host directory)
+      - ./backups:/backups
+      
+      # tmpfs (in-memory, not persisted)
+      - type: tmpfs
+        target: /tmp
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/data/postgres  # Optional: specific location
+```
+
+**Named Volumes vs Bind Mounts**:
+
+| Feature | Named Volumes | Bind Mounts |
+|---------|--------------|-------------|
+| Management | Docker manages | You manage |
+| Location | `/var/lib/docker/volumes/` | Anywhere on host |
+| Performance | Optimized by Docker | Direct filesystem |
+| Backups | Use `docker cp` | Regular file backups |
+| Use Case | Production databases | Development code |
+
+**Volume Operations**:
+```bash
+# Create volume
 docker volume create postgres_data
 
-# Bind mounts (host directory)
--v /host/path:/container/path
+# List volumes
+docker volume ls
 
-# Anonymous volumes (temporary)
--v /container/path
+# Inspect volume (see mount point)
+docker volume inspect postgres_data
+
+# Backup volume
+docker run --rm -v postgres_data:/data -v $(pwd):/backup \
+    alpine tar czf /backup/postgres_backup.tar.gz /data
+
+# Restore volume
+docker run --rm -v postgres_data:/data -v $(pwd):/backup \
+    alpine tar xzf /backup/postgres_backup.tar.gz -C /
+
+# Remove volume (after stopping containers)
+docker volume rm postgres_data
+
+# Remove all unused volumes
+docker volume prune
 ```
 
-**Interview Questions**:
-- **Q: When would you use volumes vs bind mounts?**
-  - **Volumes**: Production databases, managed by Docker, better performance
-  - **Bind mounts**: Development (live code reload), configuration files
-  - **tmpfs**: Sensitive temporary data (credentials, never written to disk)
+**Volume Performance Tips**:
+```yaml
+# For macOS/Windows: Use delegated/cached for better performance
+services:
+  app:
+    volumes:
+      - ./src:/app/src:delegated  # Host → Container (writes delayed)
+      - ./cache:/app/cache:cached  # Container → Host (reads cached)
+```
+
+#### Debugging Containers
+
+**View Logs**:
+```bash
+# Follow logs
+docker logs -f container_name
+
+# Last 100 lines
+docker logs --tail 100 container_name
+
+# Logs since timestamp
+docker logs --since 2024-11-16T10:00:00 container_name
+
+# Logs for specific service in Compose
+docker compose logs -f postgres
+```
+
+**Inspect Container**:
+```bash
+# Full container details
+docker inspect container_name
+
+# Get specific field
+docker inspect container_name | jq '.[0].State.Status'
+docker inspect container_name | jq '.[0].NetworkSettings.IPAddress'
+
+# See mounts
+docker inspect container_name | jq '.[0].Mounts'
+
+# See environment variables
+docker inspect container_name | jq '.[0].Config.Env'
+```
+
+**Execute Commands in Running Container**:
+```bash
+# Open shell
+docker exec -it container_name /bin/sh
+docker exec -it container_name /bin/bash  # If bash available
+
+# Run single command
+docker exec container_name ls /var/lib/postgresql/data
+
+# Run as different user
+docker exec -u postgres container_name psql -U indexer
+```
+
+**Debug Crashed Container**:
+```bash
+# View logs even after exit
+docker logs container_name
+
+# Check exit code
+docker inspect container_name | jq '.[0].State.ExitCode'
+# 0 = success, 1 = app error, 137 = killed (OOM), 143 = SIGTERM
+
+# Start container with shell override (debug startup issues)
+docker run -it --entrypoint /bin/sh image_name
+
+# Copy files from stopped container
+docker cp container_name:/app/logs ./logs
+```
+
+**Resource Monitoring**:
+```bash
+# Real-time stats
+docker stats
+
+# Stats for specific container
+docker stats container_name
+
+# One-time snapshot
+docker stats --no-stream
+
+# Check disk usage
+docker system df
+
+# Detailed disk usage
+docker system df -v
+```
+
+#### Health Checks
+
+**Why Health Checks**: Container might be running but application is unhealthy (e.g., database accepting connections but locked up)
+
+```yaml
+services:
+  postgres:
+    healthcheck:
+      test: [\"CMD-SHELL\", \"pg_isready -U indexer\"]
+      interval: 10s        # Check every 10 seconds
+      timeout: 5s          # Timeout after 5 seconds
+      retries: 3           # Fail after 3 consecutive failures
+      start_period: 30s    # Grace period on startup
+  
+  api:
+    healthcheck:
+      test: [\"CMD\", \"curl\", \"-f\", \"http://localhost:8000/health\"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy  # Wait for postgres to be healthy
+```
+
+**Health Check States**:
+- **starting**: During start_period
+- **healthy**: Check passed
+- **unhealthy**: Check failed retries times
+
+**Check Health**:
+```bash
+# See health status
+docker ps
+
+# Detailed health info
+docker inspect container_name | jq '.[0].State.Health'
+
+# Auto-restart unhealthy containers
+docker run --restart=unless-stopped --health-cmd=\"curl -f http://localhost\" ...
+```
 
 ### Kubernetes Fundamentals
 
@@ -834,15 +1608,443 @@ docker exec indexer-redis redis-cli ping
 docker exec indexer-kafka rpk cluster health
 ```
 
-### Database Schema
+## PostgreSQL Deep Dive
 
-**Migration 001** - Core tables: chains, blocks, transactions, logs, checkpoints  
-**Migration 002** - Advanced: protocol_signatures, parsed_calldata, internal_transactions
+### Why PostgreSQL?
 
-**Key Design**:
-- Partitioned by chain_id for query performance
-- BIGINT for block numbers, BYTEA for hashes
-- Indexes on hashes, timestamps, addresses
+**Advantages over other databases**:
+- **ACID Guarantees**: Atomicity, Consistency, Isolation, Durability for blockchain data integrity
+- **Advanced Indexing**: BTREE, HASH, GIN, GIST for different query patterns
+- **Partitioning**: Native table partitioning for horizontal scaling
+- **JSONB**: Store flexible event data with indexing support
+- **Mature Ecosystem**: 30+ years of development, battle-tested
+- **SQL Standard**: Portable knowledge, extensive tooling
+
+**vs MongoDB**:
+- PostgreSQL: Strong consistency, ACID, structured data
+- MongoDB: Eventual consistency, flexible schema, document queries
+- **Our choice**: Blockchain data is highly structured (blocks, transactions), ACID critical
+
+**vs MySQL**:
+- PostgreSQL: Better for complex queries, JSON support, advanced features
+- MySQL: Simpler, faster for basic queries, wider hosting support
+- **Our choice**: Need complex joins, partitioning, JSONB for events
+
+**vs TimescaleDB**:
+- TimescaleDB: Optimized for time-series, hypertables, continuous aggregates
+- **Our choice**: Regular PostgreSQL sufficient for MVP, TimescaleDB adds complexity
+
+### Database Schema Design
+
+#### Migration 001: Core Schema
+
+**Chains Table** - Supported blockchains:
+```sql
+CREATE TABLE chains (
+    chain_id INT PRIMARY KEY,
+    chain_name VARCHAR(50) NOT NULL,
+    rpc_url TEXT,
+    ws_url TEXT,
+    block_time_seconds INT NOT NULL,  -- For calculating lag
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Trigger for automatic timestamp updates
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_chains_updated_at 
+    BEFORE UPDATE ON chains
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+```
+
+**Blocks Table** - Partitioned by chain:
+```sql
+CREATE TABLE blocks (
+    chain_id INT NOT NULL,
+    block_number BIGINT NOT NULL,
+    block_hash BYTEA NOT NULL,
+    parent_hash BYTEA NOT NULL,
+    timestamp BIGINT NOT NULL,
+    gas_used BIGINT,
+    gas_limit BIGINT,
+    base_fee_per_gas BIGINT,  -- EIP-1559
+    difficulty BIGINT,
+    transaction_count INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (chain_id, block_number),
+    UNIQUE (chain_id, block_hash),
+    FOREIGN KEY (chain_id) REFERENCES chains(chain_id)
+) PARTITION BY LIST (chain_id);
+
+-- Create partition per chain
+CREATE TABLE blocks_eth PARTITION OF blocks FOR VALUES IN (1);
+CREATE TABLE blocks_polygon PARTITION OF blocks FOR VALUES IN (137);
+CREATE TABLE blocks_arbitrum PARTITION OF blocks FOR VALUES IN (42161);
+CREATE TABLE blocks_optimism PARTITION OF blocks FOR VALUES IN (10);
+CREATE TABLE blocks_base PARTITION OF blocks FOR VALUES IN (8453);
+
+-- Indexes for common queries
+CREATE INDEX idx_blocks_timestamp ON blocks (chain_id, timestamp DESC);
+CREATE INDEX idx_blocks_hash ON blocks USING HASH (block_hash);
+```
+
+**Why These Data Types**:
+- **BIGINT for block_number**: Ethereum has >18M blocks, BIGINT supports 9 quintillion
+- **BYTEA for hashes**: Binary storage (32 bytes) vs hex string (66 bytes) = 50% smaller
+- **BIGINT for timestamp**: Unix timestamp, supports dates until year 2262
+- **INT for transaction_count**: Blocks rarely exceed 500 transactions
+
+**Transactions Table** - Partitioned by chain:
+```sql
+CREATE TABLE transactions (
+    chain_id INT NOT NULL,
+    transaction_hash BYTEA NOT NULL,
+    block_number BIGINT NOT NULL,
+    block_hash BYTEA NOT NULL,
+    transaction_index INT NOT NULL,
+    from_address BYTEA NOT NULL,
+    to_address BYTEA,  -- NULL for contract creation
+    value NUMERIC(78, 0),  -- Wei amount (can be huge)
+    gas_price BIGINT,
+    gas_limit BIGINT,
+    gas_used BIGINT,
+    nonce BIGINT,
+    input_data BYTEA,  -- Calldata
+    status INT,  -- 0=failed, 1=success
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (chain_id, transaction_hash),
+    FOREIGN KEY (chain_id, block_number) REFERENCES blocks(chain_id, block_number)
+) PARTITION BY LIST (chain_id);
+
+-- Create partitions
+CREATE TABLE transactions_eth PARTITION OF transactions FOR VALUES IN (1);
+CREATE TABLE transactions_polygon PARTITION OF transactions FOR VALUES IN (137);
+CREATE TABLE transactions_arbitrum PARTITION OF transactions FOR VALUES IN (42161);
+CREATE TABLE transactions_optimism PARTITION OF transactions FOR VALUES IN (10);
+CREATE TABLE transactions_base PARTITION OF transactions FOR VALUES IN (8453);
+
+-- Indexes for address queries (most common)
+CREATE INDEX idx_tx_from_address ON transactions (chain_id, from_address, block_number DESC);
+CREATE INDEX idx_tx_to_address ON transactions (chain_id, to_address, block_number DESC);
+CREATE INDEX idx_tx_block ON transactions (chain_id, block_number DESC);
+```
+
+**Why NUMERIC(78, 0) for value**:
+- Ethereum amounts can be up to 2^256 - 1 wei
+- NUMERIC(78, 0) supports up to 10^78 (more than enough)
+- Precision 0 = no decimals (wei is the smallest unit)
+
+**Events Table** - Smart contract event logs:
+```sql
+CREATE TABLE events (
+    id BIGSERIAL,
+    chain_id INT NOT NULL,
+    transaction_hash BYTEA NOT NULL,
+    log_index INT NOT NULL,
+    contract_address BYTEA NOT NULL,
+    event_signature BYTEA,  -- topic[0]
+    protocol VARCHAR(100),  -- From protocol_signatures table
+    topic1 BYTEA,
+    topic2 BYTEA,
+    topic3 BYTEA,
+    data BYTEA,
+    block_number BIGINT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (chain_id, transaction_hash, log_index),
+    FOREIGN KEY (chain_id, transaction_hash) REFERENCES transactions(chain_id, transaction_hash)
+) PARTITION BY LIST (chain_id);
+
+-- Create partitions
+CREATE TABLE events_eth PARTITION OF events FOR VALUES IN (1);
+-- ... other chains
+
+-- Index for protocol-specific queries
+CREATE INDEX idx_events_protocol ON events (chain_id, protocol, block_number DESC);
+CREATE INDEX idx_events_contract ON events (chain_id, contract_address, block_number DESC);
+```
+
+**Checkpoints Table** - Resume points for services:
+```sql
+CREATE TABLE checkpoints (
+    service_name VARCHAR(50) NOT NULL,
+    chain_id INT NOT NULL,
+    last_block BIGINT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (service_name, chain_id),
+    FOREIGN KEY (chain_id) REFERENCES chains(chain_id)
+);
+
+-- Trigger for automatic timestamp
+CREATE TRIGGER update_checkpoints_updated_at 
+    BEFORE UPDATE ON checkpoints
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+```
+
+#### Migration 002: Advanced Parsing
+
+**Protocol Signatures** - Known function/event signatures:
+```sql
+CREATE TABLE protocol_signatures (
+    signature VARCHAR(10) PRIMARY KEY,  -- 0x12345678 (4 bytes)
+    function_name VARCHAR(255) NOT NULL,
+    protocol VARCHAR(100) NOT NULL,
+    abi TEXT,  -- Full function signature: transfer(address,uint256)
+    signature_type VARCHAR(10) CHECK (signature_type IN ('function', 'event')),
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Example data
+INSERT INTO protocol_signatures VALUES
+    ('0xa9059cbb', 'transfer', 'erc20', 'transfer(address,uint256)', 'function', 'ERC20 token transfer'),
+    ('0xddf252ad', 'Transfer', 'erc20', 'Transfer(address indexed,address indexed,uint256)', 'event', 'ERC20 transfer event'),
+    ('0x3593564c', 'execute', 'uniswap_v3', 'execute(bytes,bytes[])', 'function', 'Uniswap Universal Router');
+```
+
+**Parsed Calldata** - Decoded function calls:
+```sql
+CREATE TABLE parsed_calldata (
+    chain_id INT NOT NULL,
+    transaction_hash BYTEA NOT NULL,
+    signature VARCHAR(10),
+    protocol VARCHAR(100),
+    decoded_params JSONB,  -- Flexible storage for function parameters
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (chain_id, transaction_hash),
+    FOREIGN KEY (chain_id, transaction_hash) REFERENCES transactions(chain_id, transaction_hash),
+    FOREIGN KEY (signature) REFERENCES protocol_signatures(signature)
+) PARTITION BY LIST (chain_id);
+
+-- Example decoded params
+-- {"to": "0x...", "amount": "1000000000000000000", "deadline": 1700000000}
+
+-- Index for protocol queries
+CREATE INDEX idx_parsed_protocol ON parsed_calldata (chain_id, protocol);
+CREATE INDEX idx_parsed_params ON parsed_calldata USING GIN (decoded_params);
+```
+
+**Why JSONB**:
+- Different functions have different parameters
+- Can index specific fields: `CREATE INDEX ON parsed_calldata ((decoded_params->>'amount'));`
+- Query with JSON operators: `WHERE decoded_params->>'protocol' = 'uniswap'`
+- More flexible than predefined columns
+
+### Partitioning Strategy
+
+#### Why Partition?
+
+**Problem**: Single `blocks` table with 100M+ rows = slow queries
+
+**Solution**: Split into smaller partitions by `chain_id`
+
+**Benefits**:
+1. **Query Performance**: `WHERE chain_id = 1` only scans `blocks_eth` partition
+2. **Parallel Writes**: Different chains write to different partitions (no lock contention)
+3. **Maintenance**: Drop old Polygon data without affecting Ethereum
+4. **Scaling**: Move partitions to different databases later
+
+**Performance Test**:
+```sql
+-- Without partitioning: 10,000 row insert
+-- Time: 900ms
+
+-- With partitioning: 10,000 row insert to blocks_eth
+-- Time: 300ms (3x faster!)
+```
+
+#### Partition Types
+
+**1. List Partitioning** (our choice):
+```sql
+CREATE TABLE blocks (...) PARTITION BY LIST (chain_id);
+CREATE TABLE blocks_eth PARTITION OF blocks FOR VALUES IN (1);
+```
+- **Use when**: Fixed set of values (chain IDs)
+- **Pros**: Clear boundaries, easy to add/remove
+- **Cons**: Must create partition for each value
+
+**2. Range Partitioning**:
+```sql
+CREATE TABLE blocks (...) PARTITION BY RANGE (timestamp);
+CREATE TABLE blocks_2024_11 PARTITION OF blocks 
+    FOR VALUES FROM ('2024-11-01') TO ('2024-12-01');
+```
+- **Use when**: Time-series data, archival
+- **Pros**: Auto-prune old data
+- **Cons**: Must create new partitions regularly
+
+**3. Hash Partitioning**:
+```sql
+CREATE TABLE blocks (...) PARTITION BY HASH (block_hash);
+CREATE TABLE blocks_0 PARTITION OF blocks FOR VALUES WITH (MODULUS 4, REMAINDER 0);
+```
+- **Use when**: Even distribution needed
+- **Pros**: Balanced partitions
+- **Cons**: Can't target specific partition in queries
+
+#### Adding New Chain
+
+```sql
+-- Add chain to chains table
+INSERT INTO chains VALUES (56, 'BSC', 'https://...', NULL, 3, true);
+
+-- Create partitions for all tables
+CREATE TABLE blocks_bsc PARTITION OF blocks FOR VALUES IN (56);
+CREATE TABLE transactions_bsc PARTITION OF transactions FOR VALUES IN (56);
+CREATE TABLE events_bsc PARTITION OF events FOR VALUES IN (56);
+CREATE TABLE parsed_calldata_bsc PARTITION OF parsed_calldata FOR VALUES IN (56);
+
+-- All existing queries work automatically!
+SELECT * FROM blocks WHERE chain_id = 56;  -- Only scans blocks_bsc
+```
+
+### Indexing Strategy
+
+#### Index Types
+
+**1. BTREE (default)** - Best for ordered data:
+```sql
+-- Range queries
+CREATE INDEX idx_blocks_timestamp ON blocks (chain_id, timestamp DESC);
+-- SELECT * FROM blocks WHERE chain_id = 1 AND timestamp > 1700000000;
+
+-- Exact matches
+CREATE INDEX idx_tx_hash ON transactions (chain_id, transaction_hash);
+-- SELECT * FROM transactions WHERE chain_id = 1 AND transaction_hash = '0x...';
+```
+
+**2. HASH** - Best for equality only:
+```sql
+CREATE INDEX idx_blocks_hash ON blocks USING HASH (block_hash);
+-- SELECT * FROM blocks WHERE block_hash = '0x...';
+-- Faster than BTREE for exact matches, but no range queries
+```
+
+**3. GIN (Generalized Inverted Index)** - Best for JSONB, arrays:
+```sql
+CREATE INDEX idx_parsed_params ON parsed_calldata USING GIN (decoded_params);
+-- SELECT * FROM parsed_calldata WHERE decoded_params @> '{"protocol": "uniswap"}';
+```
+
+**4. GIST (Generalized Search Tree)** - Best for geometric, full-text:
+```sql
+-- Not used in our project, but good for spatial data
+CREATE INDEX idx_locations ON places USING GIST (location);
+```
+
+#### Compound Indexes
+
+**Order matters**:
+```sql
+-- Good: Filter by chain_id first (high selectivity)
+CREATE INDEX idx_tx_from ON transactions (chain_id, from_address, block_number DESC);
+-- Supports:
+--   WHERE chain_id = 1 AND from_address = '0x...'
+--   WHERE chain_id = 1 AND from_address = '0x...' AND block_number > X
+
+-- Bad: Filter by from_address first (low selectivity)
+CREATE INDEX idx_tx_from_bad ON transactions (from_address, chain_id, block_number DESC);
+-- Less efficient because many addresses across chains
+```
+
+**Index Selectivity**:
+- **High selectivity**: chain_id (5 values), block_hash (unique)
+- **Low selectivity**: status (0 or 1), to_address (many duplicates)
+- **Rule**: Put high-selectivity columns first in compound index
+
+#### Index Monitoring
+
+```sql
+-- See which indexes exist
+SELECT tablename, indexname, indexdef
+FROM pg_indexes
+WHERE schemaname = 'public'
+ORDER BY tablename, indexname;
+
+-- Check index usage
+SELECT schemaname, tablename, indexname, idx_scan, idx_tup_read
+FROM pg_stat_user_indexes
+ORDER BY idx_scan ASC;
+-- idx_scan = 0 means never used (consider dropping)
+
+-- Find missing indexes (analyze slow queries)
+SELECT * FROM pg_stat_statements
+ORDER BY total_exec_time DESC
+LIMIT 10;
+
+-- Index size
+SELECT pg_size_pretty(pg_total_relation_size('blocks_eth'));
+```
+
+### Query Optimization
+
+#### EXPLAIN ANALYZE
+
+```sql
+-- See query plan and actual execution time
+EXPLAIN ANALYZE
+SELECT * FROM blocks
+WHERE chain_id = 1 AND timestamp > 1700000000
+ORDER BY block_number DESC
+LIMIT 10;
+
+-- Output analysis:
+-- Seq Scan → Bad (scanning whole table)
+-- Index Scan → Good (using index)
+-- Bitmap Heap Scan → OK (for multiple conditions)
+-- cost=0.43..8.45 → Lower is better
+-- actual time=0.012..0.034 → Real execution time
+```
+
+**Optimization techniques**:
+1. **Add index** if Seq Scan on large table
+2. **Analyze table** if cost estimates are wrong: `ANALYZE blocks;`
+3. **Rewrite query** to use existing indexes
+4. **Increase work_mem** for large sorts: `SET work_mem = '256MB';`
+
+#### Connection Pooling
+
+```go
+// Configure connection pool
+db.SetMaxOpenConns(25)     // Total connections
+db.SetMaxIdleConns(10)      // Keep warm
+db.SetConnMaxLifetime(5 * time.Minute)  // Recycle old
+
+// Why these numbers?
+// - PostgreSQL max_connections = 100 (default)
+// - 3 services × 25 conns = 75 (< 100, leaves room for admin)
+// - Idle = 10 to avoid reconnection overhead
+// - Lifetime = 5min to detect dead connections
+```
+
+**Monitoring**:
+```sql
+-- Current connections
+SELECT count(*) FROM pg_stat_activity;
+
+-- Connections by state
+SELECT state, count(*) 
+FROM pg_stat_activity 
+GROUP BY state;
+
+-- Long-running queries
+SELECT pid, now() - query_start AS duration, query
+FROM pg_stat_activity
+WHERE state = 'active' AND now() - query_start > interval '1 minute';
+
+-- Kill slow query
+SELECT pg_terminate_backend(pid);
+```
 
 ### Environment Setup
 
