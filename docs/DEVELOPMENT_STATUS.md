@@ -286,29 +286,9 @@ database/migrations/002_add_calldata_parsing.sql  # Advanced parsing
 Makefile                                    # Development automation
 ```
 
-**Infrastructure Components**:
-
-| Service | Image | Purpose | Port |
-|---------|-------|---------|------|
-| PostgreSQL | postgres:15-alpine | Primary data store | 5432 |
-| Redis | redis:7-alpine | Cache + rate limiting | 6379 |
-| Kafka | redpanda:v23.2.15 | Event streaming | 9092, 19092 |
-| Kafka UI | provectuslabs/kafka-ui | Topic monitoring | 8080 |
-
-**Database Schema Highlights**:
-- **5 core tables**: chains, blocks, transactions, events, checkpoints
-- **Partitioning strategy**: Separate partitions per chain (eth_blocks, polygon_blocks, etc.)
-- **Indexes**: BTREE on hashes, timestamps, addresses
-- **Constraints**: Foreign keys, unique constraints on (chain_id, block_hash)
-- **Protocol registry**: 26 pre-populated signatures (Uniswap, ERC20, LayerZero, 1inch, etc.)
-
-**Testing**:
-```bash
-# All infrastructure validated working
-make docker-up      # ✅ All containers healthy
-make migrate        # ✅ Migrations applied successfully
-make db-shell       # ✅ Can query tables
-```
+**Infrastructure**: PostgreSQL, Redis, Kafka (Redpanda), Kafka UI  
+**Schema**: 5 tables (chains, blocks, transactions, events, checkpoints), partitioned by chain_id  
+**Features**: 26 protocol signatures, indexes on hashes/timestamps/addresses
 
 ---
 
@@ -407,30 +387,9 @@ protocol_signatures (
 -- - OpenSea: fulfillOrder, atomicMatch
 ```
 
-**RPC Validation Results** (Block 18,500,000 - 157 transactions):
-- ✅ Schema fields match blockchain data perfectly
-- ✅ Data types handle real-world sizes correctly
-- ❌ **Gap Found**: Uniswap Universal Router (0x3593564c) missing - **NOW ADDED**
-- ✅ ERC20 Transfer event correctly recognized
-
-**Multi-Block Analysis Results** (Latest 10 blocks - 616 transactions):
-- Total signatures found: **119 unique**
-- Unknown signatures: **110 (92%!)**
-- Top unknown: `0x78e111f6` (executeFFsYo - Meta-tx Forwarder) - **43 calls**
-
-**Key Insight**: 8% of unique signatures account for 40-50% of transaction volume. Focus on high-volume signatures.
-
-**Discovery Tool**:
-```bash
-# Analyze any EVM chain
-export ETH_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
-make explore-rpc
-
-# Output:
-# - Statistics (transactions, calldata coverage)
-# - Top 10 signatures by frequency
-# - Unknown signatures with 4byte.directory lookup links
-```
+**Validation**: 157 txs analyzed, schemas match real blockchain data, Uniswap Universal Router added  
+**Analysis**: 616 txs scanned, 119 unique signatures (92% unknown), 8% account for 40-50% volume  
+**Tool**: `make explore-rpc` - signature discovery with 4byte.directory lookup
 
 ---
 
@@ -451,20 +410,9 @@ services/api/go.mod         # Go 1.23.0 dependencies (45 explicit deps)
 services/api/go.sum         # Cryptographic verification
 ```
 
-**API Endpoints**:
-
-| Method | Endpoint | Description | Query Params |
-|--------|----------|-------------|--------------|
-| GET | `/health` | Health check | - |
-| GET | `/api/v1/chains` | List all chains | - |
-| GET | `/api/v1/chains/:id` | Get chain details | - |
-| GET | `/api/v1/blocks` | List blocks | chain_id, limit, offset |
-| GET | `/api/v1/blocks/:hash` | Get block by hash | chain_id |
-| GET | `/api/v1/blocks/number/:number` | Get block by number | chain_id |
-| GET | `/api/v1/transactions` | List transactions | chain_id, limit, offset, from, to |
-| GET | `/api/v1/transactions/:hash` | Get transaction | chain_id |
-| GET | `/api/v1/addresses/:address/transactions` | Address activity | chain_id, limit, offset |
-| GET | `/api/v1/stats` | Chain statistics | chain_id |
+**Endpoints**: 10+ (health, chains, blocks, transactions, addresses, stats)  
+**Config**: Connection pooling (25 max, 10 idle), CORS enabled  
+**Fixes**: Column name compatibility (name→chain_name, is_active→enabled)
 
 **Configuration**:
 ```go
@@ -537,47 +485,9 @@ web/
 }
 ```
 
-**API Client Features**:
-```typescript
-// All backend endpoints wrapped
-api.getChains()
-api.getChainById(chainId)
-api.getBlocks(chainId, limit?, offset?)
-api.getBlockByHash(chainId, hash)
-api.getBlockByNumber(chainId, number)
-api.getTransactions(chainId, limit?, offset?, from?, to?)
-api.getTransaction(chainId, hash)
-api.getAddressTransactions(chainId, address, limit?, offset?)
-api.getStats(chainId?)
-
-// Utility functions
-formatHash(hash, length?)      // 0x1234...5678
-formatWei(wei, decimals?)      // 1.5 ETH
-formatTimestamp(timestamp)     // Nov 16, 2025, 10:30 AM
-```
-
-**Testing**:
-```bash
-cd web
-npm run dev
-# ✅ Dev server starts on http://localhost:5173
-# ✅ No TypeScript errors
-# ✅ API client types validated
-```
-
-**Git Commit** (aa992d6):
-```
-feat: Initialize Vite + React frontend with comprehensive learning docs
-
-- Vite 7 + React 18 + TypeScript setup
-- Tailwind CSS v4 with @tailwindcss/postcss
-- Complete API client matching backend endpoints
-- Type-safe interfaces for all API responses
-- Blockchain utility functions (formatHash, formatWei, formatTimestamp)
-- React Router, React Query, Zustand installed
-- ShadCN-compatible Tailwind theme
-- 24 files, 6,921 lines added
-```
+**API Client**: All 10+ endpoints wrapped, type-safe TypeScript interfaces  
+**Utilities**: formatHash(), formatWei(), formatTimestamp()  
+**Commit aa992d6**: 24 files, 6,921 lines added
 
 ---
 
@@ -588,30 +498,11 @@ feat: Initialize Vite + React frontend with comprehensive learning docs
 **Decision Date**: November 14, 2025  
 **Chosen**: **Go**
 
-**Rationale**:
+**Why Go**: 40% faster development, 3-5x larger hiring pool, go-ethereum ecosystem, goroutines for multi-chain  
+**Why not Rust**: Steeper learning curve, overkill for I/O-bound workload (network latency >> GC pause)  
+**Performance**: Both handle 10K+ req/sec, network (200-500ms) dominates over GC (1-10ms)
 
-✅ **Go Advantages**:
-- Faster development (40% less code for same features)
-- Better hiring pool (3-5x more Go developers than Rust)
-- Excellent blockchain ecosystem (go-ethereum is the reference client)
-- Built-in concurrency (goroutines perfect for multi-chain processing)
-- Simpler learning curve for team members
-- Fast compilation (2-5s vs 30-60s for Rust)
-
-❌ **Rust Disadvantages**:
-- Steeper learning curve (borrow checker complexity)
-- Longer development time (fighting compiler)
-- Smaller hiring pool
-- Overkill for I/O-bound workload (most time spent waiting on RPC calls)
-
-**Performance Analysis**:
-- Network latency dominates (200-500ms per RPC call)
-- Go's GC pause (1-10ms) is negligible compared to network
-- Both languages can handle 10,000+ requests/sec (well above our needs)
-
-**Conclusion**: Go's productivity advantage (40% faster development) outweighs Rust's minor performance edge for this I/O-bound workload.
-
-**Full Analysis**: See `LANGUAGE_CHOICE.md`
+Full analysis: `LANGUAGE_CHOICE.md`
 
 ---
 
@@ -620,33 +511,11 @@ feat: Initialize Vite + React frontend with comprehensive learning docs
 **Decision Date**: November 14, 2025  
 **Chosen**: **Event-Driven Microservices**
 
-**Rationale**:
+**Benefits**: Independent scaling, resilience, flexibility, isolated observability  
+**Trade-offs**: More complexity, Kafka adds 10-50ms latency  
+**MVP**: Deferred Kafka → Direct PostgreSQL writes (simpler, same schema, can add Kafka later)
 
-✅ **Event-Driven Advantages**:
-- **Scalability**: Can scale ingester, processor, API independently
-- **Resilience**: One service failure doesn't crash entire system
-- **Flexibility**: Can add new consumers (analytics, alerts) without touching producer
-- **Observability**: Each service has isolated metrics and logs
-
-Architecture:
-```
-Ingester → Kafka → Processor → PostgreSQL → API
-```
-
-**Trade-offs**:
-- More operational complexity (3 services vs 1)
-- Kafka adds latency (~10-50ms)
-- More moving parts to monitor
-
-**MVP Simplification**:
-For MVP, we **deferred Kafka** and made ingester write directly to PostgreSQL:
-```
-Ingester → PostgreSQL → API
-```
-
-This reduces complexity while keeping the same database schema. Can add Kafka later without changing frontend.
-
-**Full Architecture**: See `TECHNICAL_SPEC.md`
+Full architecture: `TECHNICAL_SPEC.md`
 
 ---
 
@@ -655,33 +524,10 @@ This reduces complexity while keeping the same database schema. Can add Kafka la
 **Decision Date**: November 14, 2025  
 **Chosen**: **Partition by chain_id**
 
-**Rationale**:
+**Benefits**: 3x faster queries (query only relevant partition), parallel writes (no lock contention), easy maintenance  
+**Testing**: 10K inserts – 300ms with partitioning vs 900ms without
 
-✅ **Partitioning Benefits**:
-- **Query performance**: Most queries filter by chain (e.g., "show Ethereum blocks")
-- **Parallel writes**: Each chain writes to separate partition (no lock contention)
-- **Maintenance**: Can drop old chain data without affecting others
-- **Future scaling**: Easy to move partitions to different databases
-
-**Schema**:
-```sql
--- Parent table
-CREATE TABLE blocks (
-    chain_id INT NOT NULL,
-    block_number BIGINT NOT NULL,
-    block_hash BYTEA NOT NULL,
-    -- ... other columns
-) PARTITION BY LIST (chain_id);
-
--- Per-chain partitions
-CREATE TABLE blocks_eth PARTITION OF blocks FOR VALUES IN (1);
-CREATE TABLE blocks_polygon PARTITION OF blocks FOR VALUES IN (137);
--- etc.
-```
-
-**Testing**: 10,000 row insert with partitioning is 3x faster than without (300ms vs 900ms).
-
-**Full Schema**: See `database/migrations/001_initial_schema.sql`
+Schema: `database/migrations/001_initial_schema.sql`
 
 ---
 
@@ -690,21 +536,8 @@ CREATE TABLE blocks_polygon PARTITION OF blocks FOR VALUES IN (137);
 **Decision Date**: November 16, 2025  
 **Chosen**: **React (Vite)**
 
-**Rationale**:
-
-✅ **Vite + React Advantages**:
-- Faster dev server (instant HMR vs 2-3s in Next.js)
-- Simpler setup (no API routes, middleware, routing complexity)
-- Client-side rendering sufficient (no SEO requirements for private indexer)
-- Smaller bundle size (only ship what you need)
-- More control over build process
-
-❌ **Next.js Disadvantages**:
-- Overkill for this use case (we don't need SSR or API routes)
-- Slower development iteration (heavier framework)
-- More opinionated (harder to customize)
-
-**Conclusion**: Vite's simplicity and speed match our needs perfectly. Can migrate to Next.js later if SEO becomes a requirement.
+**Why Vite+React**: Instant HMR, simpler setup, CSR sufficient (no SEO needed), smaller bundles  
+**Why not Next.js**: Overkill (no SSR/API routes needed), slower iteration
 
 ---
 
@@ -713,38 +546,10 @@ CREATE TABLE blocks_polygon PARTITION OF blocks FOR VALUES IN (137);
 **Decision Date**: November 16, 2025  
 **Chosen**: **TanStack Query (React Query) + Zustand**
 
-**Rationale**:
+**TanStack Query** (server state): Auto-caching, refetching, loading/error states, pagination  
+**Zustand** (client state): 50% less code than Redux, no boilerplate, TypeScript-first
 
-**TanStack Query for server state**:
-- ✅ Automatic caching with invalidation
-- ✅ Background refetching (keep data fresh)
-- ✅ Loading and error states handled
-- ✅ Optimistic updates support
-- ✅ Pagination and infinite scroll built-in
-
-**Zustand for client state**:
-- ✅ Simpler than Redux (50% less code)
-- ✅ No boilerplate (no actions, reducers, etc.)
-- ✅ TypeScript-first
-- ✅ DevTools support
-- ✅ Perfect for simple global state (selected chain, theme, etc.)
-
-**Example**:
-```typescript
-// Server state (React Query)
-const { data: blocks } = useQuery({
-    queryKey: ['blocks', chainId],
-    queryFn: () => api.getBlocks(chainId, 20)
-})
-
-// Client state (Zustand)
-const useChainStore = create<ChainStore>((set) => ({
-    selectedChainId: 1,
-    setChain: (id) => set({ selectedChainId: id })
-}))
-```
-
-**Alternative Considered**: Redux (rejected - too much boilerplate)
+Rejected: Redux (too much boilerplate)
 
 ---
 
@@ -753,36 +558,8 @@ const useChainStore = create<ChainStore>((set) => ({
 **Decision Date**: November 16, 2025  
 **Chosen**: **Tailwind CSS v4 + ShadCN-compatible theme**
 
-**Rationale**:
-
-✅ **Tailwind Advantages**:
-- Utility-first (no CSS file bloat)
-- Dark mode built-in
-- Responsive by default
-- Component libraries (ShadCN) available
-- Smaller bundle size (only used classes shipped)
-
-**v4 Specific**:
-- New PostCSS plugin (`@tailwindcss/postcss`)
-- Faster builds (Oxide engine in Rust)
-- Better TypeScript support
-- Simpler configuration
-
-**Theme**:
-```javascript
-// ShadCN-compatible theme
-theme: {
-    extend: {
-        colors: {
-            border: "hsl(var(--border))",
-            background: "hsl(var(--background))",
-            // ... full design system
-        }
-    }
-}
-```
-
-**Alternative Considered**: CSS Modules (rejected - more verbose, no design system)
+**Why Tailwind v4**: Utility-first, dark mode, responsive, ShadCN compatible, smaller bundles, faster builds (Oxide)  
+**Why not CSS Modules**: More verbose, no design system
 
 ---
 
@@ -1229,94 +1006,41 @@ make setup
 
 ### System Design
 
-**Q: How would you design a multi-chain blockchain indexer?**
+**Q: Design a multi-chain blockchain indexer**
 
-**Answer Structure**:
-1. **Requirements**: Multi-chain, real-time (<60s lag), queryable API
-2. **Architecture**: Event-driven microservices
-   ```
-   Ingester → [Kafka] → Processor → PostgreSQL → API
-   ```
-3. **Data Model**: Partitioned tables by chain_id
-4. **Scalability**: Horizontal scaling per service
-5. **Trade-offs**: 
-   - MVP: Skip Kafka (simpler) → Ingester writes directly to DB
-   - Future: Add Kafka when >10 chains (better decoupling)
+**A**: Event-driven microservices → Ingester (WebSocket+polling) → PostgreSQL (partitioned by chain_id) → API (REST+caching). MVP: Direct DB writes. Scale: Add Kafka when >10 chains. Key: Checkpointing for fault tolerance, reorg detection.
 
-**Detailed Answer**: See `docs/TECHNICAL_SPEC.md`
+Details: `docs/TECHNICAL_SPEC.md`
 
 ---
 
 ### Database Design
 
-**Q: How do you handle billions of transactions?**
+**Q: Handle billions of transactions?**
 
-**Answer**:
-1. **Partitioning by chain_id**: Each chain gets its own partition
-   - Benefit: Queries are fast (scan only relevant partition)
-   - Example: "Show Ethereum blocks" only scans `blocks_eth`
-   
-2. **Time-based archival**: Move old data (>6 months) to S3
-   
-3. **Indexing strategy**:
-   - BTREE on hashes (exact lookups)
-   - BTREE on (chain_id, block_number) (range queries)
-   - BTREE on (from_address, to_address) (address activity)
-   
-4. **Connection pooling**: Limit to 25 max connections
-   
-5. **Testing**: 10K row insert with partitioning is 3x faster (300ms vs 900ms)
+**A**: Partition by chain_id (3x faster, parallel writes), BTREE indexes on hashes/block_number/addresses, connection pooling (25 max), time-based archival to S3. Testing: 10K inserts 300ms vs 900ms unpartitioned.
 
-**Code Example**: See `database/migrations/001_initial_schema.sql`
+Schema: `database/migrations/001_initial_schema.sql`
 
 ---
 
 ### Multi-Chain Strategy
 
-**Q: How do you decide which chains to support?**
+**Q: Which chains to support?**
 
-**Answer**:
-1. **Tier 1** (Must-have): Ethereum, Polygon, Arbitrum, Optimism, Base
-   - Reasoning: Highest TVL, most users, EVM-compatible
-   
-2. **Tier 2** (Nice-to-have): BSC, Avalanche, zkSync
-   - Reasoning: Significant activity but less critical
-   
-3. **Tier 3** (Optional): Other L2s, alt-L1s
-   
-4. **Cost Analysis**: $100-300/month per chain (RPC costs)
-   
-5. **Prioritization**: Focus on chains with >$1B TVL
+**A**: Tier 1 (Ethereum, Polygon, Arbitrum, Optimism, Base) = highest TVL, EVM-compatible. Tier 2 (BSC, Avalanche) = significant activity. Cost: $100-300/mo per chain. Prioritize: >$1B TVL.
 
-**Detailed Analysis**: See `docs/MULTICHAIN_SPEC.md`
+Analysis: `docs/MULTICHAIN_SPEC.md`
 
 ---
 
 ### Technical Decisions
 
-**Q: Why Go over Rust?**
+**Q: Go over Rust?**  
+**A**: 40% faster dev, 3-5x hiring pool, go-ethereum ecosystem. Both handle 10K+ req/sec, network (200-500ms) >> GC (1-10ms). See `LANGUAGE_CHOICE.md`
 
-**Answer**:
-- **Productivity**: Go is 40% faster to write (less code, simpler syntax)
-- **Hiring**: 3-5x more Go developers available
-- **Performance**: Both handle 10K+ req/sec, network latency dominates (200-500ms RPC calls)
-- **Ecosystem**: go-ethereum is the reference client
-- **Trade-off**: Rust has 10-20% better performance, but Go's dev speed matters more for MVP
-
-**Full Analysis**: See `LANGUAGE_CHOICE.md`
-
----
-
-**Q: Why defer Kafka for MVP?**
-
-**Answer**:
-- **Simplicity**: Direct PostgreSQL writes are simpler (1 service vs 3)
-- **Fast iteration**: Can validate product faster
-- **Schema compatibility**: Database schema supports both architectures
-- **Migration path**: Can add Kafka later without changing frontend
-- **When to add**: When scaling to >10 chains or need replay/audit trail
-
-**Decision Log**: See [Technical Decisions](#technical-decisions-log)
+**Q: Defer Kafka?**  
+**A**: MVP simplicity (1 service vs 3), faster validation, same schema, add later when >10 chains. See [Technical Decisions](#technical-decisions-log)
 
 ---
 

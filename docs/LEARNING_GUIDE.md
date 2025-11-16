@@ -6,70 +6,20 @@ This document captures all setup steps, learning points, architectural decisions
 
 ---
 
-## 🎯 Technology Stack Overview (Job Requirements Alignment)
+## 🎯 Technology Stack
 
-This project demonstrates proficiency across multiple technology domains commonly required in modern software engineering roles:
+**Backend**: Go, PostgreSQL (partitioned), Redis, Kafka (Redpanda)  
+**Frontend**: React 18, TypeScript, Vite, Tailwind CSS, React Query, Zustand  
+**Blockchain**: go-ethereum, multi-chain (Ethereum, Polygon, Arbitrum, Optimism, Base)  
+**Infrastructure**: Docker Compose, Makefile, Prometheus/Grafana (planned)
 
-### **Backend Engineering**
-| Technology | Project Usage | Interview Relevance |
-|------------|---------------|---------------------|
-| **Go** | Primary language for services (Ingester, API) | Concurrency, performance-critical systems |
-| **Node.js** | *(Planned: WebSocket service for real-time updates)* | Event-driven architecture, microservices |
-| **REST APIs** | JSON API with pagination, filtering | Standard web service patterns |
-| **WebSocket** | Real-time block subscriptions from RPC nodes | Bidirectional communication |
-
-### **Databases & Data Storage**
-| Technology | Project Usage | Interview Relevance |
-|------------|---------------|---------------------|
-| **PostgreSQL** | Primary datastore with partitioning, triggers, views | ACID transactions, complex queries, indexing strategies |
-| **Redis** | Caching layer for API responses | High-speed data structures, pub/sub patterns |
-| **MongoDB** | *(Not used - PostgreSQL chosen for ACID guarantees)* | Document stores vs relational trade-offs |
-
-### **Message Queues & Event Streaming**
-| Technology | Project Usage | Interview Relevance |
-|------------|---------------|---------------------|
-| **Kafka (Redpanda)** | Event streaming for parsed transactions | Distributed systems, event sourcing |
-| **Redis Streams** | *(Alternative considered for simpler deployment)* | Lightweight message queues |
-
-### **Containerization & Orchestration**
-| Technology | Project Usage | Interview Relevance |
-|------------|---------------|---------------------|
-| **Docker** | All services containerized (PostgreSQL, Redis, Kafka, custom services) | Container fundamentals, networking, volumes |
-| **Docker Compose** | Local development orchestration | Multi-container applications |
-| **Kubernetes** | *(Production deployment - covered in interview prep below)* | Cloud-native deployments, scaling |
-
-### **Frontend Development**
-| Technology | Project Usage | Interview Relevance |
-|------------|---------------|---------------------|
-| **React** | Dashboard UI with hooks, context API | Component-driven development |
-| **Next.js** | *(Considered for SSR dashboard)* | Full-stack framework, SSR/SSG |
-| **TypeScript** | Type-safe frontend code | Static typing, large codebases |
-| **Vite** | Fast development build tool | Modern bundlers |
-| **Tailwind CSS** | Utility-first styling | Rapid UI development |
-
-### **Blockchain Technologies**
-| Technology | Project Usage | Interview Relevance |
-|------------|---------------|---------------------|
-| **Ethereum** | Primary chain, EVM-compatible standard | Smart contracts, RPC/WebSocket APIs |
-| **go-ethereum** | Official Go client library | Low-level blockchain interaction |
-| **Web3.js / ethers.js** | *(Frontend wallet integration)* | Blockchain frontends, MetaMask |
-| **Multi-chain (Polygon, Arbitrum, Optimism, Base)** | Production-scale indexing across L1/L2 | Cross-chain architecture |
-
-### **DevOps & Infrastructure**
-| Technology | Project Usage | Interview Relevance |
-|------------|---------------|---------------------|
-| **Makefile** | Task automation and developer experience | Build systems |
-| **GitHub Actions** | *(Planned: CI/CD pipeline)* | Automated testing and deployment |
-| **Prometheus + Grafana** | *(Planned: Metrics and monitoring)* | Observability |
-
-### **Key Architecture Patterns Demonstrated**
-- ✅ **Microservices Architecture**: Separate ingester, processor, API services
-- ✅ **Event-Driven Design**: Kafka for decoupled services
-- ✅ **CQRS (Command Query Responsibility Segregation)**: Write-optimized ingester, read-optimized API
-- ✅ **Database Partitioning**: Horizontal scaling strategy
-- ✅ **Graceful Degradation**: WebSocket with HTTP polling fallback
-- ✅ **Idempotency**: Safe to re-run ingestion without duplicates
-- ✅ **Checkpointing**: Resume processing from failure points
+**Architecture Patterns**:
+- Microservices (Ingester, Processor, API)
+- Event-driven (Kafka streaming)
+- CQRS (write-optimized ingester, read-optimized API)
+- Database partitioning by chain_id
+- Graceful degradation (WebSocket → HTTP fallback)
+- Checkpointing for fault tolerance
 
 ---
 
@@ -859,320 +809,67 @@ go mod graph | grep github.com/specific/package
 
 Our blockchain indexer uses a containerized infrastructure with four core services:
 
-#### 1. **PostgreSQL Database** (`indexer-postgres`)
-- **Image**: `postgres:15-alpine`
-- **Port**: 5432
-- **Purpose**: Primary data store for blocks, transactions, and analytics
-- **Configuration**:
-  - Database: `indexer`
-  - User: `indexer`
-  - Password: `password` (change in production!)
-  - UTF-8 encoding with `POSTGRES_INITDB_ARGS: "-E UTF8"`
-- **Health Check**: `pg_isready -U indexer` every 10s
-- **Volume**: Persistent storage at `postgres_data:/var/lib/postgresql/data`
-- **Features**:
-  - Partitioned tables by chain_id for horizontal scaling
-  - BTREE indexes on frequently queried columns
-  - Triggers for automatic timestamp updates
-  - Foreign key constraints for data integrity
+| Service | Image | Port | Purpose |
+|---------|-------|------|----------|
+| **PostgreSQL** | postgres:15-alpine | 5432 | Primary data store, partitioned by chain_id |
+| **Redis** | redis:7-alpine | 6379 | Caching + rate limiting |
+| **Kafka** | redpanda:v23.2.15 | 9092/19092 | Event streaming (Kafka-compatible, no ZooKeeper) |
+| **Kafka UI** | provectuslabs/kafka-ui | 8080 | Topic monitoring web interface |
 
-#### 2. **Redis Cache** (`indexer-redis`)
-- **Image**: `redis:7-alpine`
-- **Port**: 6379
-- **Purpose**: High-speed caching layer for API responses and session data
-- **Configuration**:
-  - Append-only file (AOF) persistence enabled
-  - Command: `redis-server --appendonly yes`
-- **Health Check**: `redis-cli ping` every 10s
-- **Volume**: `redis_data:/data`
-- **Use Cases**:
-  - Cache frequently accessed blocks/transactions
-  - Rate limiting for API endpoints
-  - Temporary storage for WebSocket connections
+### Essential Commands
 
-#### 3. **Kafka/Redpanda** (`indexer-kafka`)
-- **Image**: `docker.redpanda.com/redpandadata/redpanda:v23.2.15`
-- **Ports**: 9092 (internal), 19092 (external), 18081-18082 (schema registry)
-- **Purpose**: Event streaming for real-time data pipelines
-- **Why Redpanda**: Kafka-compatible but simpler setup (no ZooKeeper)
-- **Configuration**:
-  - Internal address: `internal://0.0.0.0:9092`
-  - External address: `external://0.0.0.0:19092`
-  - Schema registry on 18081
-- **Health Check**: Cluster health monitoring
-- **Planned Topics**:
-  - `raw.blocks` - Raw block data from RPC
-  - `parsed.events` - Decoded smart contract events
-  - `system.reorg` - Blockchain reorganization events
-
-#### 4. **Kafka UI** (`indexer-kafka-ui`)
-- **Image**: `provectuslabs/kafka-ui`
-- **Port**: 8080
-- **Purpose**: Web interface to monitor Kafka topics, messages, and consumers
-- **Access**: `http://localhost:8080`
-
-### Docker Network
-- **Name**: `indexer-network`
-- **Type**: Bridge network for inter-container communication
-- **Purpose**: Isolate indexer services from other Docker containers
-
-### Essential Docker Commands
-
-#### Starting Infrastructure
 ```bash
-# Start all services
-make docker-up
-# OR
-docker compose -f infrastructure/docker/docker-compose.yml up -d
-
-# View logs
-make logs
-# OR
-docker compose -f infrastructure/docker/docker-compose.yml logs -f
-
-# Check service status
-make status
-# OR
-docker ps --filter "name=indexer-"
-```
-
-#### Health Checks
-```bash
-# PostgreSQL
-docker exec indexer-postgres pg_isready -U indexer
-
-# Redis
-docker exec indexer-redis redis-cli ping
-
-# Kafka cluster health
-docker exec indexer-kafka rpk cluster health
-
-# List Kafka topics
-docker exec indexer-kafka rpk topic list
-```
-
-#### Database Operations
-```bash
-# Run migrations
-make migrate
-# Manual migration via Docker
-docker exec -i indexer-postgres psql -U indexer -d indexer < database/migrations/001_initial_schema.sql
-
-# Open psql shell
-make db-shell
-# OR
-docker exec -it indexer-postgres psql -U indexer -d indexer
-
-# Check table structure
-docker exec indexer-postgres psql -U indexer -d indexer -c "\d chains"
-
-# Query data
-docker exec indexer-postgres psql -U indexer -d indexer -c "SELECT * FROM chains;"
-```
-
-#### Troubleshooting
-```bash
-# View container logs
-docker logs indexer-postgres -f
-docker logs indexer-kafka -f
-
-# Restart a service
-docker restart indexer-postgres
-
-# Stop and remove all services
-make docker-down
-# OR
-docker compose -f infrastructure/docker/docker-compose.yml down
-
-# Nuclear option: Remove volumes (DELETES ALL DATA)
-docker compose -f infrastructure/docker/docker-compose.yml down -v
-```
-
-### Database Schema Setup
-
-#### Migration Strategy
-- **Tool**: Raw SQL migrations (no ORM migration framework)
-- **Location**: `database/migrations/`
-- **Naming**: `001_initial_schema.sql`, `002_add_calldata_parsing.sql`, etc.
-- **Execution**: Sequential, idempotent where possible
-
-#### Migration 001: Core Schema
-Creates the foundation tables:
-- `chains` - Supported blockchain networks
-- `blocks` - Block headers (partitioned by chain_id)
-- `transactions` - Transaction data (partitioned by chain_id)
-- `logs` - Smart contract event logs (partitioned by chain_id)
-- `checkpoints` - Service resume points
-
-**Key Design Decisions**:
-- **Partitioning by chain_id**: Each chain's data in separate partitions for query performance
-- **BIGINT for block numbers**: Supports chains with >2B blocks
-- **BYTEA for hashes**: Binary storage more efficient than hex strings
-- **Indexes**: Created on hash lookups, timestamp ranges, address filters
-
-#### Migration 002: Advanced Parsing
-Adds intelligence layer:
-- `protocol_signatures` - Registry of known smart contract functions
-- `parsed_calldata` - Decoded function calls with parameters
-- `internal_transactions` - Contract-to-contract calls
-- `transaction_revert_reasons` - Why transactions failed
-
-### Service Configuration
-
-#### Environment Variables
-```bash
-# Database
-DATABASE_URL="postgres://indexer:password@localhost:5432/indexer?sslmode=disable"
-
-# RPC Endpoints (one per chain)
-ETH_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
-ETH_WS_URL="wss://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"  # Optional
-POLYGON_RPC_URL="https://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY"
-ARBITRUM_RPC_URL="https://arb-mainnet.g.alchemy.com/v2/YOUR_KEY"
-OPTIMISM_RPC_URL="https://opt-mainnet.g.alchemy.com/v2/YOUR_KEY"
-BASE_RPC_URL="https://base-mainnet.g.alchemy.com/v2/YOUR_KEY"
-
-# Ingester Settings
-INGESTER_BATCH_SIZE=10
-INGESTER_POLL_INTERVAL=2s
-```
-
-#### PostgreSQL Client Setup (macOS)
-```bash
-# Install PostgreSQL client tools
-brew install postgresql@15
-
-# Add to PATH (required for psql command)
-export PATH="/opt/homebrew/opt/postgresql@15/bin:$PATH"
-
-# Add to shell profile for persistence
-echo 'export PATH="/opt/homebrew/opt/postgresql@15/bin:$PATH"' >> ~/.zshrc
-```
-
-### Common Issues & Solutions
-
-#### Issue: Database Authentication Failed
-**Error**: `pq: password authentication failed for user "indexer"`
-
-**Cause**: Service using wrong credentials (common during development)
-
-**Solution**:
-1. Check Docker Compose credentials: `indexer:password@localhost:5432/indexer`
-2. Update service code to match
-3. Rebuild service: `go build -o service main.go`
-4. If persists, restart PostgreSQL: `docker restart indexer-postgres`
-
-#### Issue: Column Name Mismatch
-**Error**: `pq: column "name" does not exist`
-
-**Cause**: Database uses `chain_name` but code queries `name`
-
-**Solution**: Update all SQL queries to use correct column names:
-```sql
--- Wrong
-SELECT name FROM chains;
-
--- Correct
-SELECT chain_name FROM chains;
-```
-
-#### Issue: Go Build Cache Confusion
-**Error**: Code changes not reflected in running service
-
-**Solution**:
-```bash
-# Clear Go build cache
-go clean -cache
-
-# Kill old process
-pkill -9 -f "service/main.go"
-
-# Rebuild and run
-go build -o service main.go
-./service
-```
-
-#### Issue: Port Already in Use
-**Error**: `bind: address already in use`
-
-**Solution**:
-```bash
-# Find process on port (e.g., 8000)
-lsof -ti:8000
-
-# Kill it
-lsof -ti:8000 | xargs kill -9
-
-# Or use pkill
-pkill -9 -f "api/main.go"
-```
-
-### Makefile Automation
-
-Our `Makefile` provides shortcuts for common operations:
-
-```makefile
-# Complete setup from scratch
-make setup          # = docker-up + wait + migrate
-
 # Infrastructure
-make docker-up      # Start all containers
-make docker-down    # Stop all containers
-make logs           # Tail all container logs
-make status         # Check running services
+make docker-up          # Start all services
+make logs               # View logs
+make docker-down        # Stop all services
 
 # Database
-make migrate        # Run all migrations
-make db-shell       # Open psql interactive shell
-make db-reset       # Drop and recreate schema (DESTRUCTIVE)
+make migrate            # Run migrations
+make db-shell           # Open psql
 
-# Services
-make run-ingester   # Start ingester service
-make run-api        # Start API service
-
-# Development
-make test           # Run test suite
-make clean          # Stop services and remove volumes
+# Health checks
+docker exec indexer-postgres pg_isready -U indexer
+docker exec indexer-redis redis-cli ping
+docker exec indexer-kafka rpk cluster health
 ```
 
-### Interview-Ready Talking Points
+### Database Schema
 
-**Q: How do you ensure database schema changes don't break production?**
-- Sequential migrations with version numbers
-- Test migrations locally first
-- Use transactions for atomic schema changes
-- Maintain backward compatibility (add columns with defaults)
-- Blue-green deployment: Run old and new code side-by-side
+**Migration 001** - Core tables: chains, blocks, transactions, logs, checkpoints  
+**Migration 002** - Advanced: protocol_signatures, parsed_calldata, internal_transactions
 
-**Q: Why partition tables by chain_id?**
-- **Query performance**: Most queries filter by chain (ETH only, Polygon only)
-- **Parallel writes**: Each chain writes to its own partition (no lock contention)
-- **Maintenance**: Can drop old chain data without affecting others
-- **Future scaling**: Easy to move partitions to different databases
+**Key Design**:
+- Partitioned by chain_id for query performance
+- BIGINT for block numbers, BYTEA for hashes
+- Indexes on hashes, timestamps, addresses
 
-**Q: Why use Docker Compose instead of Kubernetes for development?**
-- **Simplicity**: Fast local setup (2 minutes vs 20+ minutes for k8s)
-- **Resource efficiency**: Docker Compose uses ~500MB RAM, k8s uses 2-4GB
-- **Iteration speed**: Change docker-compose.yml and restart in seconds
-- **Production**: We'd use Kubernetes, but for development Docker Compose is ideal
-- **Cost**: Free locally, matches CI/CD pipeline tools
+### Environment Setup
 
-**Q: How do you handle database connection pooling?**
-```go
-db.SetMaxOpenConns(25)        // Limit total connections
-db.SetMaxIdleConns(10)         // Keep connections warm
-db.SetConnMaxLifetime(5 * time.Minute)  // Recycle old connections
+```bash
+# Database
+DATABASE_URL="postgres://indexer:password@localhost:5432/indexer"
+
+# RPC endpoints
+ETH_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
+POLYGON_RPC_URL="https://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY"
+# ... other chains
+
+# PostgreSQL client (macOS)
+brew install postgresql@15
+export PATH="/opt/homebrew/opt/postgresql@15/bin:$PATH"
 ```
-- **Reasoning**: 25 is safe for RDS t3.medium (100 max connections)
-- **Monitoring**: Track connection metrics via Prometheus
-- **Tuning**: Adjust based on service concurrency and query latency
 
-**Q: What's your backup and recovery strategy?**
-- **PostgreSQL**: Automated daily snapshots via AWS RDS
-- **Point-in-time recovery**: RDS transaction logs (5-35 day retention)
-- **Disaster recovery**: Cross-region replicas for critical chains
-- **Testing**: Monthly restore drills to validate backups
-- **Data loss tolerance**: Blocks can be re-indexed from blockchain (source of truth)
+### Common Issues
+
+```bash
+# Authentication failed → Check credentials match docker-compose.yml
+# Column not found → Use chain_name not name, enabled not is_active
+# Port in use → lsof -ti:8000 | xargs kill -9
+# Build cache → go clean -cache && pkill -f "main.go"
+```
+
+See [DEVELOPMENT_STATUS.md](./DEVELOPMENT_STATUS.md#development-workflow) for detailed troubleshooting.
 
 ---
 
@@ -1463,28 +1160,7 @@ Update this learning guide with findings in Phase 2.X sections.
 
 ---
 
-### 📋 Phase 3: Processor Service (Planned)
-- [ ] Kafka consumer setup
-- [ ] Event parsing (ERC20, ERC721)
-- [ ] Calldata parsing implementation
-- [ ] Internal transaction extraction
-- [ ] Revert reason extraction
-- [ ] ABI decoding
-- [ ] Database writer with batching
-- [ ] Error handling & retries
-
-### 📋 Phase 4: API Service (Planned)
-- [ ] REST API with Gin/Echo
-- [ ] WebSocket for real-time updates
-- [ ] Redis caching layer
-- [ ] Rate limiting
-- [ ] API documentation (Swagger)
-
-### 📋 Phase 5: Observability (Planned)
-- [ ] Prometheus metrics
-- [ ] Grafana dashboards
-- [ ] Distributed tracing (Jaeger)
-- [ ] Log aggregation
+**Phases 3-5**: See [DEVELOPMENT_STATUS.md - Next Steps Roadmap](./DEVELOPMENT_STATUS.md#next-steps-roadmap-prioritized) for detailed implementation plan.
 
 ---
 
