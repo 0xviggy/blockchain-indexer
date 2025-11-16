@@ -66,18 +66,19 @@ Blockchain → Ingester → Kafka → Processor → PostgreSQL → API → Users
 
 | Doc | Purpose |
 |-----|---------|
-| **[Learning Guide](./docs/LEARNING_GUIDE.md)** | 📚 **Start here** - Setup, implementation log, decisions, interview prep |
+| **[Development Status](./docs/DEVELOPMENT_STATUS.md)** | 🎯 **Start here** - Progress tracker, decisions, TODOs, roadmap |
+| **[Learning Guide](./docs/LEARNING_GUIDE.md)** | 📚 Deep dive - Implementation details, tutorials, interview prep |
 | [Technical Spec](./docs/TECHNICAL_SPEC.md) | Architecture, algorithms, multi-chain design |
 | [Business Spec](./docs/BUSINESS_SPEC.md) | Requirements, KPIs, use cases |
 | [Chain Support Strategy](./docs/CHAIN_SUPPORT.md) | ⛓️ Which chains to support, priorities, cost analysis |
 
 ## Project Status
 
-**Phase 1: Infrastructure** ✅ Complete (Docker, PostgreSQL, migrations, schema validation)  
-**Phase 2: Ingester Service** ✅ Complete (Multi-chain, WebSocket, checkpoints)  
-**Phase 3: API Service** ✅ Complete (REST endpoints, documentation, health checks)  
-**Phase 4: Web UI** 🔄 **Next** - Block explorer interface  
-**Phase 5: Advanced Features** 📋 Planned (Event parsing, reorg handling, monitoring)
+**Current**: Phase 5.1 (Backend Data Correctness) - Fixing transaction status & event parsing  
+**Completed**: Phases 0-4.1 (Infrastructure, Ingester, API, Frontend foundation)  
+**Next**: Phase 4.2 (Frontend UI), Phase 5.2-5.3 (Observability, Performance)
+
+See **[DEVELOPMENT_STATUS.md](./docs/DEVELOPMENT_STATUS.md)** for detailed progress, technical decisions, and prioritized roadmap.
 
 ### Quick Test
 
@@ -92,11 +93,11 @@ make run-ingester
 # Terminal 3: Start API
 make run-api
 
-# Visit: http://localhost:8000/docs
-# Test: curl http://localhost:8000/api/v1/chains
-```
+# Terminal 4: Start frontend
+cd web && npm run dev
 
-See [Learning Guide](./docs/LEARNING_GUIDE.md#implementation-progress-tracker) for detailed progress.
+# Visit: http://localhost:5173 (frontend) or http://localhost:8000/health (API)
+```
 
 ## License
 

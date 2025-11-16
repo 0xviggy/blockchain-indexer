@@ -824,6 +824,10 @@ go mod graph | grep github.com/specific/package
 
 ## Implementation Progress Tracker
 
+> **📋 For comprehensive progress tracking, see [DEVELOPMENT_STATUS.md](./DEVELOPMENT_STATUS.md)**
+> 
+> This section provides a historical log of implementation phases. For current status, next steps, technical decisions, and prioritized roadmap, refer to the Development Status document.
+
 ### ✅ Phase 0: Planning & Architecture (Completed - Nov 14, 2025)
 - [x] Language decision: Go vs Rust analysis
 - [x] Architecture design (event-driven, microservices)
@@ -831,7 +835,7 @@ go mod graph | grep github.com/specific/package
 - [x] Tech stack selection
 - [x] Documentation structure
 
-**Decision**: **Go** (see [Design Decisions](#design-decisions--trade-offs) section)  
+**Decision**: **Go** (see [DEVELOPMENT_STATUS.md - Technical Decisions](./DEVELOPMENT_STATUS.md#technical-decisions-log))  
 **Key Docs**: See `TECHNICAL_SPEC.md`, `MULTICHAIN_SPEC.md` for detailed specs
 
 ### ✅ Phase 1: Infrastructure & Database (Completed - Nov 14, 2025)
