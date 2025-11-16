@@ -176,7 +176,7 @@ func getEnvInt64(key string, defaultVal int64) int64 {
 func connectDB() (*sql.DB, error) {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://indexer:indexer_password@localhost:5432/blockchain_indexer?sslmode=disable"
+		dbURL = "postgres://indexer:password@localhost:5432/indexer?sslmode=disable"
 	}
 
 	db, err := sql.Open("postgres", dbURL)
@@ -239,14 +239,27 @@ func (ing *Ingester) connectChains() error {
 
 func (ing *Ingester) ensureChainsExist() error {
 	query := `
-		INSERT INTO chains (chain_id, name, is_active)
-		VALUES ($1, $2, true)
+		INSERT INTO chains (chain_id, chain_name, rpc_url, ws_url, block_time_seconds, enabled)
+		VALUES ($1, $2, $3, $4, $5, true)
 		ON CONFLICT (chain_id) DO UPDATE
-		SET name = EXCLUDED.name, is_active = true, updated_at = NOW()
+		SET chain_name = EXCLUDED.chain_name, 
+		    rpc_url = EXCLUDED.rpc_url,
+		    ws_url = EXCLUDED.ws_url,
+		    enabled = true, 
+		    updated_at = NOW()
 	`
 
 	for _, chain := range ing.chains {
-		if _, err := ing.db.Exec(query, chain.ChainID, chain.Name); err != nil {
+		// Default block times for common chains
+		blockTime := 12 // Default for Ethereum
+		if chain.ChainID == 137 {
+			blockTime = 2 // Polygon
+		} else if chain.ChainID == 42161 || chain.ChainID == 10 || chain.ChainID == 8453 {
+			blockTime = 2 // Arbitrum, Optimism, Base
+		}
+		
+		wsURL := sql.NullString{String: chain.WSUrl, Valid: chain.WSUrl != ""}
+		if _, err := ing.db.Exec(query, chain.ChainID, chain.Name, chain.RPCURL, wsURL, blockTime); err != nil {
 			return fmt.Errorf("failed to insert chain %s: %w", chain.Name, err)
 		}
 	}
@@ -330,12 +343,13 @@ func (ing *Ingester) subscribeToBlocks(chain ChainConfig, client *ethclient.Clie
 			ing.subscribeToBlocks(chain, client, lastBlock)
 			return
 		case header := <-headers:
-			if err := ing.processBlock(chain, header.Number.Int64()); err != nil {
+			blockNum := header.Number.Int64()
+			if err := ing.processBlock(chain, blockNum); err != nil {
 				log.Printf("❌ [%s] Failed to process block %d: %v",
-					chain.Name, header.Number.Int64(), err)
+					chain.Name, blockNum, err)
 			} else {
-				log.Printf("✅ [%s] Block %d processed (%d txs)",
-					chain.Name, header.Number.Int64(), len(header.Transactions()))
+				log.Printf("✅ [%s] Block %d processed",
+					chain.Name, blockNum)
 			}
 		}
 	}

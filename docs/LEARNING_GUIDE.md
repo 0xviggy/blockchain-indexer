@@ -6,6 +6,481 @@ This document captures all setup steps, learning points, architectural decisions
 
 ---
 
+## 🎯 Technology Stack Overview (Job Requirements Alignment)
+
+This project demonstrates proficiency across multiple technology domains commonly required in modern software engineering roles:
+
+### **Backend Engineering**
+| Technology | Project Usage | Interview Relevance |
+|------------|---------------|---------------------|
+| **Go** | Primary language for services (Ingester, API) | Concurrency, performance-critical systems |
+| **Node.js** | *(Planned: WebSocket service for real-time updates)* | Event-driven architecture, microservices |
+| **REST APIs** | JSON API with pagination, filtering | Standard web service patterns |
+| **WebSocket** | Real-time block subscriptions from RPC nodes | Bidirectional communication |
+
+### **Databases & Data Storage**
+| Technology | Project Usage | Interview Relevance |
+|------------|---------------|---------------------|
+| **PostgreSQL** | Primary datastore with partitioning, triggers, views | ACID transactions, complex queries, indexing strategies |
+| **Redis** | Caching layer for API responses | High-speed data structures, pub/sub patterns |
+| **MongoDB** | *(Not used - PostgreSQL chosen for ACID guarantees)* | Document stores vs relational trade-offs |
+
+### **Message Queues & Event Streaming**
+| Technology | Project Usage | Interview Relevance |
+|------------|---------------|---------------------|
+| **Kafka (Redpanda)** | Event streaming for parsed transactions | Distributed systems, event sourcing |
+| **Redis Streams** | *(Alternative considered for simpler deployment)* | Lightweight message queues |
+
+### **Containerization & Orchestration**
+| Technology | Project Usage | Interview Relevance |
+|------------|---------------|---------------------|
+| **Docker** | All services containerized (PostgreSQL, Redis, Kafka, custom services) | Container fundamentals, networking, volumes |
+| **Docker Compose** | Local development orchestration | Multi-container applications |
+| **Kubernetes** | *(Production deployment - covered in interview prep below)* | Cloud-native deployments, scaling |
+
+### **Frontend Development**
+| Technology | Project Usage | Interview Relevance |
+|------------|---------------|---------------------|
+| **React** | Dashboard UI with hooks, context API | Component-driven development |
+| **Next.js** | *(Considered for SSR dashboard)* | Full-stack framework, SSR/SSG |
+| **TypeScript** | Type-safe frontend code | Static typing, large codebases |
+| **Vite** | Fast development build tool | Modern bundlers |
+| **Tailwind CSS** | Utility-first styling | Rapid UI development |
+
+### **Blockchain Technologies**
+| Technology | Project Usage | Interview Relevance |
+|------------|---------------|---------------------|
+| **Ethereum** | Primary chain, EVM-compatible standard | Smart contracts, RPC/WebSocket APIs |
+| **go-ethereum** | Official Go client library | Low-level blockchain interaction |
+| **Web3.js / ethers.js** | *(Frontend wallet integration)* | Blockchain frontends, MetaMask |
+| **Multi-chain (Polygon, Arbitrum, Optimism, Base)** | Production-scale indexing across L1/L2 | Cross-chain architecture |
+
+### **DevOps & Infrastructure**
+| Technology | Project Usage | Interview Relevance |
+|------------|---------------|---------------------|
+| **Makefile** | Task automation and developer experience | Build systems |
+| **GitHub Actions** | *(Planned: CI/CD pipeline)* | Automated testing and deployment |
+| **Prometheus + Grafana** | *(Planned: Metrics and monitoring)* | Observability |
+
+### **Key Architecture Patterns Demonstrated**
+- ✅ **Microservices Architecture**: Separate ingester, processor, API services
+- ✅ **Event-Driven Design**: Kafka for decoupled services
+- ✅ **CQRS (Command Query Responsibility Segregation)**: Write-optimized ingester, read-optimized API
+- ✅ **Database Partitioning**: Horizontal scaling strategy
+- ✅ **Graceful Degradation**: WebSocket with HTTP polling fallback
+- ✅ **Idempotency**: Safe to re-run ingestion without duplicates
+- ✅ **Checkpointing**: Resume processing from failure points
+
+---
+
+## 📚 Extended Interview Preparation Topics
+
+### Docker Deep Dive
+
+#### Core Concepts
+```dockerfile
+# Multi-stage builds for smaller images
+FROM golang:1.21 AS builder
+WORKDIR /app
+COPY . .
+RUN go build -o service
+
+FROM alpine:latest
+COPY --from=builder /app/service /service
+CMD ["/service"]
+```
+
+**Interview Questions**:
+- **Q: How do multi-stage builds reduce image size?**
+  - A: First stage compiles with full SDK (~800MB), second stage copies only the binary to minimal Alpine (~5MB base). Final image is <50MB vs >800MB.
+  
+- **Q: What's the difference between CMD and ENTRYPOINT?**
+  - A: `ENTRYPOINT` defines the executable, `CMD` provides default arguments. `ENTRYPOINT` can't be overridden easily, `CMD` can be replaced at runtime.
+
+- **Q: How do you debug a crashed container?**
+  ```bash
+  # View logs even after exit
+  docker logs <container_id>
+  
+  # Inspect exit code
+  docker inspect <container_id> | jq '.[0].State'
+  
+  # Start with shell override
+  docker run -it --entrypoint /bin/sh <image>
+  ```
+
+#### Networking
+```yaml
+# Docker Compose network configuration
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true  # No external access
+```
+
+**Interview Questions**:
+- **Q: How do containers communicate in Docker Compose?**
+  - A: By service name (DNS resolution). `http://postgres:5432` works because Docker Compose creates a network and DNS entries.
+
+- **Q: What's the difference between bridge and host networking?**
+  - **Bridge**: Isolated network with port mapping (default)
+  - **Host**: Shares host's network stack (better performance, less isolation)
+  - **None**: No networking (for security)
+
+#### Volumes
+```bash
+# Named volumes (managed by Docker)
+docker volume create postgres_data
+
+# Bind mounts (host directory)
+-v /host/path:/container/path
+
+# Anonymous volumes (temporary)
+-v /container/path
+```
+
+**Interview Questions**:
+- **Q: When would you use volumes vs bind mounts?**
+  - **Volumes**: Production databases, managed by Docker, better performance
+  - **Bind mounts**: Development (live code reload), configuration files
+  - **tmpfs**: Sensitive temporary data (credentials, never written to disk)
+
+### Kubernetes Fundamentals
+
+#### Translating Docker Compose to Kubernetes
+
+**Our Docker Compose**:
+```yaml
+services:
+  postgres:
+    image: postgres:15-alpine
+    ports: ["5432:5432"]
+    volumes: [postgres_data:/var/lib/postgresql/data]
+```
+
+**Equivalent Kubernetes**:
+```yaml
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+
+---
+# Service (networking)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  ports:
+  - port: 5432
+  selector:
+    app: postgres
+
+---
+# PersistentVolumeClaim (storage)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+```
+
+**Interview Questions**:
+- **Q: What's the difference between Deployment and StatefulSet?**
+  - **Deployment**: Stateless apps, pods are interchangeable, random names
+  - **StatefulSet**: Stateful apps (databases), stable network identities (postgres-0, postgres-1), ordered deployment
+  - **Use StatefulSet for**: Databases, Kafka, ZooKeeper
+
+- **Q: How does Kubernetes service discovery work?**
+  - A: Kubernetes DNS creates records for Services. `postgres.default.svc.cluster.local` resolves to Service IP. Pods can use short name `postgres` within same namespace.
+
+- **Q: What's a PersistentVolume vs PersistentVolumeClaim?**
+  - **PV**: Actual storage provisioned by admin (like a physical disk)
+  - **PVC**: Request for storage by application (like a reservation)
+  - **StorageClass**: Dynamic provisioner (auto-creates PVs from cloud provider)
+
+#### Scaling Patterns
+```yaml
+# Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-scaler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+```
+
+**Interview Questions**:
+- **Q: How would you scale the ingester service?**
+  - A: Partition chains across pods (Pod 1: ETH+Polygon, Pod 2: Arbitrum+Base), use Kubernetes Jobs for catch-up mode, scale vertically for real-time ingestion.
+
+### PostgreSQL Advanced Topics
+
+#### Indexing Strategies
+```sql
+-- B-tree (default) - good for = and range queries
+CREATE INDEX idx_blocks_timestamp ON blocks (timestamp);
+
+-- Hash index - only for = queries (faster but limited)
+CREATE INDEX idx_tx_hash ON transactions USING HASH (tx_hash);
+
+-- Partial index - smaller, faster for subset queries
+CREATE INDEX idx_pending_tx ON transactions (status) 
+WHERE status = 'pending';
+
+-- Composite index - order matters!
+CREATE INDEX idx_chain_block ON blocks (chain_id, block_number);
+-- Good for: WHERE chain_id = 1 AND block_number > 1000
+-- Bad for: WHERE block_number > 1000 (chain_id not leading)
+```
+
+**Interview Questions**:
+- **Q: How do you identify missing indexes?**
+  ```sql
+  -- Find slow queries
+  SELECT query, calls, total_time, mean_time
+  FROM pg_stat_statements
+  ORDER BY mean_time DESC
+  LIMIT 10;
+  
+  -- Check index usage
+  SELECT schemaname, tablename, indexname, idx_scan
+  FROM pg_stat_user_indexes
+  ORDER BY idx_scan ASC;  -- Unused indexes
+  ```
+
+- **Q: What's the trade-off of adding indexes?**
+  - **Pros**: Faster reads (can be 1000x speedup)
+  - **Cons**: Slower writes (every INSERT/UPDATE must update indexes), more storage (30-50% overhead), maintenance overhead
+  - **Rule**: Index columns in WHERE, JOIN, ORDER BY clauses with high selectivity
+
+#### Partitioning Deep Dive
+```sql
+-- Range partitioning (by time)
+CREATE TABLE logs_2025_01 PARTITION OF logs
+FOR VALUES FROM ('2025-01-01') TO ('2025-02-01');
+
+-- List partitioning (by enum)
+CREATE TABLE blocks_ethereum PARTITION OF blocks
+FOR VALUES IN (1);
+
+-- Hash partitioning (distribute evenly)
+CREATE TABLE users_0 PARTITION OF users
+FOR VALUES WITH (MODULUS 4, REMAINDER 0);
+```
+
+**Our Choice**: List partitioning by chain_id
+```sql
+CREATE TABLE blocks_chain_1 PARTITION OF blocks
+FOR VALUES IN (1);  -- Ethereum only
+```
+
+**Interview Questions**:
+- **Q: When should you partition a table?**
+  - A: When table > 10GB and queries filter by partition key. Benefits: Faster queries (prune partitions), easier archiving (drop old partitions), parallel maintenance.
+
+- **Q: How does partition pruning work?**
+  ```sql
+  EXPLAIN SELECT * FROM blocks WHERE chain_id = 1;
+  -- Only scans blocks_chain_1, skips other partitions
+  ```
+
+### Kafka & Event Streaming
+
+#### Producer Patterns
+```go
+// Asynchronous with batching (high throughput)
+producer.ProduceAsync(&kafka.Message{
+    Topic: "raw.blocks",
+    Key:   []byte(fmt.Sprintf("%d:%d", chainID, blockNumber)),
+    Value: blockJSON,
+})
+
+// Synchronous with acknowledgment (guaranteed delivery)
+msg, err := producer.ProduceSync(&kafka.Message{
+    Topic: "raw.blocks",
+    Value: blockJSON,
+})
+```
+
+**Interview Questions**:
+- **Q: How do you ensure exactly-once semantics in Kafka?**
+  - A: Enable idempotent producer (retries don't create duplicates) + transactional producer (atomic multi-partition writes) + read_committed consumer isolation level.
+
+- **Q: What's the difference between topics and partitions?**
+  - **Topic**: Logical stream (e.g., "raw.blocks")
+  - **Partition**: Physical log file (e.g., "raw.blocks-0", "raw.blocks-1")
+  - **Ordering guarantee**: Within partition only, not across partitions
+  - **Scaling**: Add partitions to parallelize consumers
+
+#### Consumer Group Patterns
+```go
+// Consumer group ensures each message processed once
+consumer := kafka.NewConsumer(&kafka.ConfigMap{
+    "bootstrap.servers": "localhost:9092",
+    "group.id":          "indexer-processor",
+    "auto.offset.reset": "earliest",
+})
+```
+
+**Interview Questions**:
+- **Q: How does Kafka handle consumer failures?**
+  - A: Consumer heartbeat mechanism. If consumer stops heartbeat, coordinator triggers rebalance and reassigns partitions to healthy consumers. Offset commits allow resuming from last processed message.
+
+### Redis Patterns
+
+#### Caching Strategies
+```go
+// Cache-aside (lazy loading)
+func GetBlock(chainID, blockNum int64) (*Block, error) {
+    // Try cache first
+    key := fmt.Sprintf("block:%d:%d", chainID, blockNum)
+    if data, err := redis.Get(key).Bytes(); err == nil {
+        return unmarshal(data)
+    }
+    
+    // Cache miss - load from DB
+    block := db.GetBlock(chainID, blockNum)
+    
+    // Populate cache with TTL
+    redis.Set(key, marshal(block), 10*time.Minute)
+    return block, nil
+}
+
+// Write-through (always consistent)
+func SaveBlock(block *Block) error {
+    // Write to DB first
+    if err := db.Save(block); err != nil {
+        return err
+    }
+    
+    // Then update cache
+    key := fmt.Sprintf("block:%d:%d", block.ChainID, block.Number)
+    redis.Set(key, marshal(block), 10*time.Minute)
+    return nil
+}
+```
+
+**Interview Questions**:
+- **Q: How do you handle cache invalidation?**
+  - A: "There are only two hard things in Computer Science: cache invalidation and naming things."
+  - **TTL**: Expire after time (good for rarely-changed data)
+  - **Event-driven**: Kafka consumer invalidates cache on updates
+  - **Version tags**: Increment version number in key
+
+- **Q: What's the thundering herd problem?**
+  - A: Many requests hit expired cache key simultaneously, all query DB in parallel. Solution: Lock with Redis SETNX or use probabilistic early expiration.
+
+### React & Next.js Patterns
+
+#### State Management
+```typescript
+// Context API for global state
+const BlockchainContext = createContext<BlockchainState>({
+    selectedChain: 'ethereum',
+    latestBlock: null,
+});
+
+// Custom hooks for business logic
+function useBlockStream(chainId: number) {
+    const [blocks, setBlocks] = useState<Block[]>([]);
+    
+    useEffect(() => {
+        const ws = new WebSocket(`wss://api/v1/chains/${chainId}/stream`);
+        ws.onmessage = (event) => {
+            const block = JSON.parse(event.data);
+            setBlocks(prev => [block, ...prev].slice(0, 50));
+        };
+        return () => ws.close();
+    }, [chainId]);
+    
+    return blocks;
+}
+```
+
+**Interview Questions**:
+- **Q: When would you use Context vs Redux vs Zustand?**
+  - **Context**: Small apps, simple global state (theme, auth)
+  - **Redux**: Large apps, complex state logic, time-travel debugging
+  - **Zustand**: Middle ground, less boilerplate than Redux
+
+- **Q: What's the difference between SSR, SSG, and CSR in Next.js?**
+  - **SSR (getServerSideProps)**: Render on each request (dynamic data)
+  - **SSG (getStaticProps)**: Render at build time (blogs, docs)
+  - **CSR (useEffect)**: Render in browser (dashboards, user-specific)
+  - **ISR (revalidate)**: SSG with periodic regeneration (best of both)
+
+### Node.js & TypeScript
+
+#### Async Patterns
+```typescript
+// Promise chaining (readable, sequential)
+fetchBlock(1000)
+    .then(block => processTransactions(block))
+    .then(txs => saveToDB(txs))
+    .catch(err => console.error(err));
+
+// Async/await (looks synchronous)
+try {
+    const block = await fetchBlock(1000);
+    const txs = await processTransactions(block);
+    await saveToDB(txs);
+} catch (err) {
+    console.error(err);
+}
+
+// Parallel execution
+const [block1, block2] = await Promise.all([
+    fetchBlock(1000),
+    fetchBlock(1001),
+]);
+```
+
+**Interview Questions**:
+- **Q: What's the event loop?**
+  - A: Single-threaded execution with callback queue. Async operations (I/O, timers) run in background, callbacks queued for event loop to process when call stack is empty.
+
+- **Q: How do you avoid callback hell?**
+  - A: Use Promises or async/await, create named functions, use libraries like async.js for complex flows.
+
+---
+
 ## Implementation Progress Tracker
 
 ### ✅ Phase 0: Planning & Architecture (Completed - Nov 14, 2025)
@@ -30,6 +505,331 @@ This document captures all setup steps, learning points, architectural decisions
 **Status**: Ready for service implementation  
 **Files Created**: 6 core files  
 **Lines of Code**: ~700 (SQL + YAML + Makefile)
+
+---
+
+## Infrastructure Setup & DevOps (Interview Focus)
+
+### Docker Infrastructure Components
+
+Our blockchain indexer uses a containerized infrastructure with four core services:
+
+#### 1. **PostgreSQL Database** (`indexer-postgres`)
+- **Image**: `postgres:15-alpine`
+- **Port**: 5432
+- **Purpose**: Primary data store for blocks, transactions, and analytics
+- **Configuration**:
+  - Database: `indexer`
+  - User: `indexer`
+  - Password: `password` (change in production!)
+  - UTF-8 encoding with `POSTGRES_INITDB_ARGS: "-E UTF8"`
+- **Health Check**: `pg_isready -U indexer` every 10s
+- **Volume**: Persistent storage at `postgres_data:/var/lib/postgresql/data`
+- **Features**:
+  - Partitioned tables by chain_id for horizontal scaling
+  - BTREE indexes on frequently queried columns
+  - Triggers for automatic timestamp updates
+  - Foreign key constraints for data integrity
+
+#### 2. **Redis Cache** (`indexer-redis`)
+- **Image**: `redis:7-alpine`
+- **Port**: 6379
+- **Purpose**: High-speed caching layer for API responses and session data
+- **Configuration**:
+  - Append-only file (AOF) persistence enabled
+  - Command: `redis-server --appendonly yes`
+- **Health Check**: `redis-cli ping` every 10s
+- **Volume**: `redis_data:/data`
+- **Use Cases**:
+  - Cache frequently accessed blocks/transactions
+  - Rate limiting for API endpoints
+  - Temporary storage for WebSocket connections
+
+#### 3. **Kafka/Redpanda** (`indexer-kafka`)
+- **Image**: `docker.redpanda.com/redpandadata/redpanda:v23.2.15`
+- **Ports**: 9092 (internal), 19092 (external), 18081-18082 (schema registry)
+- **Purpose**: Event streaming for real-time data pipelines
+- **Why Redpanda**: Kafka-compatible but simpler setup (no ZooKeeper)
+- **Configuration**:
+  - Internal address: `internal://0.0.0.0:9092`
+  - External address: `external://0.0.0.0:19092`
+  - Schema registry on 18081
+- **Health Check**: Cluster health monitoring
+- **Planned Topics**:
+  - `raw.blocks` - Raw block data from RPC
+  - `parsed.events` - Decoded smart contract events
+  - `system.reorg` - Blockchain reorganization events
+
+#### 4. **Kafka UI** (`indexer-kafka-ui`)
+- **Image**: `provectuslabs/kafka-ui`
+- **Port**: 8080
+- **Purpose**: Web interface to monitor Kafka topics, messages, and consumers
+- **Access**: `http://localhost:8080`
+
+### Docker Network
+- **Name**: `indexer-network`
+- **Type**: Bridge network for inter-container communication
+- **Purpose**: Isolate indexer services from other Docker containers
+
+### Essential Docker Commands
+
+#### Starting Infrastructure
+```bash
+# Start all services
+make docker-up
+# OR
+docker compose -f infrastructure/docker/docker-compose.yml up -d
+
+# View logs
+make logs
+# OR
+docker compose -f infrastructure/docker/docker-compose.yml logs -f
+
+# Check service status
+make status
+# OR
+docker ps --filter "name=indexer-"
+```
+
+#### Health Checks
+```bash
+# PostgreSQL
+docker exec indexer-postgres pg_isready -U indexer
+
+# Redis
+docker exec indexer-redis redis-cli ping
+
+# Kafka cluster health
+docker exec indexer-kafka rpk cluster health
+
+# List Kafka topics
+docker exec indexer-kafka rpk topic list
+```
+
+#### Database Operations
+```bash
+# Run migrations
+make migrate
+# Manual migration via Docker
+docker exec -i indexer-postgres psql -U indexer -d indexer < database/migrations/001_initial_schema.sql
+
+# Open psql shell
+make db-shell
+# OR
+docker exec -it indexer-postgres psql -U indexer -d indexer
+
+# Check table structure
+docker exec indexer-postgres psql -U indexer -d indexer -c "\d chains"
+
+# Query data
+docker exec indexer-postgres psql -U indexer -d indexer -c "SELECT * FROM chains;"
+```
+
+#### Troubleshooting
+```bash
+# View container logs
+docker logs indexer-postgres -f
+docker logs indexer-kafka -f
+
+# Restart a service
+docker restart indexer-postgres
+
+# Stop and remove all services
+make docker-down
+# OR
+docker compose -f infrastructure/docker/docker-compose.yml down
+
+# Nuclear option: Remove volumes (DELETES ALL DATA)
+docker compose -f infrastructure/docker/docker-compose.yml down -v
+```
+
+### Database Schema Setup
+
+#### Migration Strategy
+- **Tool**: Raw SQL migrations (no ORM migration framework)
+- **Location**: `database/migrations/`
+- **Naming**: `001_initial_schema.sql`, `002_add_calldata_parsing.sql`, etc.
+- **Execution**: Sequential, idempotent where possible
+
+#### Migration 001: Core Schema
+Creates the foundation tables:
+- `chains` - Supported blockchain networks
+- `blocks` - Block headers (partitioned by chain_id)
+- `transactions` - Transaction data (partitioned by chain_id)
+- `logs` - Smart contract event logs (partitioned by chain_id)
+- `checkpoints` - Service resume points
+
+**Key Design Decisions**:
+- **Partitioning by chain_id**: Each chain's data in separate partitions for query performance
+- **BIGINT for block numbers**: Supports chains with >2B blocks
+- **BYTEA for hashes**: Binary storage more efficient than hex strings
+- **Indexes**: Created on hash lookups, timestamp ranges, address filters
+
+#### Migration 002: Advanced Parsing
+Adds intelligence layer:
+- `protocol_signatures` - Registry of known smart contract functions
+- `parsed_calldata` - Decoded function calls with parameters
+- `internal_transactions` - Contract-to-contract calls
+- `transaction_revert_reasons` - Why transactions failed
+
+### Service Configuration
+
+#### Environment Variables
+```bash
+# Database
+DATABASE_URL="postgres://indexer:password@localhost:5432/indexer?sslmode=disable"
+
+# RPC Endpoints (one per chain)
+ETH_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
+ETH_WS_URL="wss://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"  # Optional
+POLYGON_RPC_URL="https://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY"
+ARBITRUM_RPC_URL="https://arb-mainnet.g.alchemy.com/v2/YOUR_KEY"
+OPTIMISM_RPC_URL="https://opt-mainnet.g.alchemy.com/v2/YOUR_KEY"
+BASE_RPC_URL="https://base-mainnet.g.alchemy.com/v2/YOUR_KEY"
+
+# Ingester Settings
+INGESTER_BATCH_SIZE=10
+INGESTER_POLL_INTERVAL=2s
+```
+
+#### PostgreSQL Client Setup (macOS)
+```bash
+# Install PostgreSQL client tools
+brew install postgresql@15
+
+# Add to PATH (required for psql command)
+export PATH="/opt/homebrew/opt/postgresql@15/bin:$PATH"
+
+# Add to shell profile for persistence
+echo 'export PATH="/opt/homebrew/opt/postgresql@15/bin:$PATH"' >> ~/.zshrc
+```
+
+### Common Issues & Solutions
+
+#### Issue: Database Authentication Failed
+**Error**: `pq: password authentication failed for user "indexer"`
+
+**Cause**: Service using wrong credentials (common during development)
+
+**Solution**:
+1. Check Docker Compose credentials: `indexer:password@localhost:5432/indexer`
+2. Update service code to match
+3. Rebuild service: `go build -o service main.go`
+4. If persists, restart PostgreSQL: `docker restart indexer-postgres`
+
+#### Issue: Column Name Mismatch
+**Error**: `pq: column "name" does not exist`
+
+**Cause**: Database uses `chain_name` but code queries `name`
+
+**Solution**: Update all SQL queries to use correct column names:
+```sql
+-- Wrong
+SELECT name FROM chains;
+
+-- Correct
+SELECT chain_name FROM chains;
+```
+
+#### Issue: Go Build Cache Confusion
+**Error**: Code changes not reflected in running service
+
+**Solution**:
+```bash
+# Clear Go build cache
+go clean -cache
+
+# Kill old process
+pkill -9 -f "service/main.go"
+
+# Rebuild and run
+go build -o service main.go
+./service
+```
+
+#### Issue: Port Already in Use
+**Error**: `bind: address already in use`
+
+**Solution**:
+```bash
+# Find process on port (e.g., 8000)
+lsof -ti:8000
+
+# Kill it
+lsof -ti:8000 | xargs kill -9
+
+# Or use pkill
+pkill -9 -f "api/main.go"
+```
+
+### Makefile Automation
+
+Our `Makefile` provides shortcuts for common operations:
+
+```makefile
+# Complete setup from scratch
+make setup          # = docker-up + wait + migrate
+
+# Infrastructure
+make docker-up      # Start all containers
+make docker-down    # Stop all containers
+make logs           # Tail all container logs
+make status         # Check running services
+
+# Database
+make migrate        # Run all migrations
+make db-shell       # Open psql interactive shell
+make db-reset       # Drop and recreate schema (DESTRUCTIVE)
+
+# Services
+make run-ingester   # Start ingester service
+make run-api        # Start API service
+
+# Development
+make test           # Run test suite
+make clean          # Stop services and remove volumes
+```
+
+### Interview-Ready Talking Points
+
+**Q: How do you ensure database schema changes don't break production?**
+- Sequential migrations with version numbers
+- Test migrations locally first
+- Use transactions for atomic schema changes
+- Maintain backward compatibility (add columns with defaults)
+- Blue-green deployment: Run old and new code side-by-side
+
+**Q: Why partition tables by chain_id?**
+- **Query performance**: Most queries filter by chain (ETH only, Polygon only)
+- **Parallel writes**: Each chain writes to its own partition (no lock contention)
+- **Maintenance**: Can drop old chain data without affecting others
+- **Future scaling**: Easy to move partitions to different databases
+
+**Q: Why use Docker Compose instead of Kubernetes for development?**
+- **Simplicity**: Fast local setup (2 minutes vs 20+ minutes for k8s)
+- **Resource efficiency**: Docker Compose uses ~500MB RAM, k8s uses 2-4GB
+- **Iteration speed**: Change docker-compose.yml and restart in seconds
+- **Production**: We'd use Kubernetes, but for development Docker Compose is ideal
+- **Cost**: Free locally, matches CI/CD pipeline tools
+
+**Q: How do you handle database connection pooling?**
+```go
+db.SetMaxOpenConns(25)        // Limit total connections
+db.SetMaxIdleConns(10)         // Keep connections warm
+db.SetConnMaxLifetime(5 * time.Minute)  // Recycle old connections
+```
+- **Reasoning**: 25 is safe for RDS t3.medium (100 max connections)
+- **Monitoring**: Track connection metrics via Prometheus
+- **Tuning**: Adjust based on service concurrency and query latency
+
+**Q: What's your backup and recovery strategy?**
+- **PostgreSQL**: Automated daily snapshots via AWS RDS
+- **Point-in-time recovery**: RDS transaction logs (5-35 day retention)
+- **Disaster recovery**: Cross-region replicas for critical chains
+- **Testing**: Monthly restore drills to validate backups
+- **Data loss tolerance**: Blocks can be re-indexed from blockchain (source of truth)
+
+---
 
 ### ✅ Phase 2: Ingester Service - MVP (Completed - Nov 15, 2025)
 - [x] Go module initialization
@@ -344,15 +1144,96 @@ Update this learning guide with findings in Phase 2.X sections.
 ---
 
 ## Table of Contents
-1. [Prerequisites & Installation](#prerequisites--installation)
-2. [System Architecture Overview](#system-architecture-overview)
-3. [Setup Steps & Commands](#setup-steps--commands)
-4. [Key Technical Concepts](#key-technical-concepts)
-5. [Design Decisions & Trade-offs](#design-decisions--trade-offs)
-6. [Common Interview Questions](#common-interview-questions)
-7. [Troubleshooting Guide](#troubleshooting-guide)
-8. [Performance Optimization](#performance-optimization)
-9. [Production Readiness](#production-readiness)
+
+### Core Sections
+1. [Implementation Progress Tracker](#implementation-progress-tracker)
+   - [Phase 0: Planning & Architecture](#-phase-0-planning--architecture-completed---nov-14-2025)
+   - [Phase 1: Infrastructure & Database](#-phase-1-infrastructure--database-completed---nov-14-2025)
+   - [Phase 2: Ingester Service - MVP](#-phase-2-ingester-service---mvp-completed---nov-15-2025)
+   - [Phase 2.1: Advanced Message Parsing](#-phase-21-advanced-message-parsing-completed---nov-14-2025)
+   - [Phase 2.1 Findings: RPC Validation](#phase-21-findings-rpc-validation--completed)
+   - [Phase 2.2 Findings: Multi-Block Signature Analysis](#phase-22-findings-multi-block-signature-analysis--completed)
+   - [How to Recreate Multi-Block Signature Analysis](#-how-to-recreate-multi-block-signature-analysis)
+   - [Phase 3: Processor Service (Planned)](#-phase-3-processor-service-planned)
+   - [Phase 4: API Service (Planned)](#-phase-4-api-service-planned)
+   - [Phase 5: Observability (Planned)](#-phase-5-observability-planned)
+
+2. [Prerequisites & Quick Start](#prerequisites--quick-start)
+   - [Install Requirements (macOS)](#install-requirements-macos)
+   - [Understanding Go Installation](#understanding-go-installation)
+   - [Start the System](#start-the-system)
+
+3. [System Architecture](#system-architecture)
+
+4. [Setup Steps & Commands](#setup-steps--commands)
+   - [Phase 1: Infrastructure Setup](#phase-1-infrastructure-setup-completed-)
+   - [Phase 2.1: Calldata Parsing Implementation](#phase-21-calldata-parsing-implementation-completed-)
+   - [Phase 2: Ingester Service](#phase-2-ingester-service-next)
+   - [Docker Infrastructure](#docker-infrastructure-legacy-instructions)
+   - [Database Setup](#database-setup-legacy-instructions)
+   - [Running Services](#running-services)
+
+5. [Key Technical Concepts](#key-technical-concepts)
+   - [1. Message Parsing Overview](#1-message-parsing-overview)
+     - [Internal Transactions](#internal-transactions)
+     - [Calldata Parsing](#calldata-parsing)
+     - [Revert Reason Extraction](#revert-reason-extraction)
+   - [2. Blockchain Reorg Handling](#2-blockchain-reorg-handling)
+   - [3. Event Parsing (ERC20 Transfer Example)](#3-event-parsing-erc20-transfer-example)
+   - [4. Database Partitioning Strategy](#4-database-partitioning-strategy)
+   - [5. Rate Limiting with Token Bucket](#5-rate-limiting-with-token-bucket)
+   - [6. Kafka Message Ordering](#6-kafka-message-ordering)
+
+6. [Design Decisions & Trade-offs](#design-decisions--trade-offs)
+   - [1. Language Choice: Go vs Rust](#1-language-choice-go-vs-rust-)
+   - [2. Message Broker: Kafka vs RabbitMQ](#2-message-broker-kafka-vs-rabbitmq)
+   - [3. Database: PostgreSQL vs TimescaleDB vs Cassandra](#3-database-postgresql-vs-timescaledb-vs-cassandra)
+   - [4. Monorepo vs Separate Repos](#4-monorepo-vs-separate-repos)
+
+7. [Common Interview Questions](#common-interview-questions)
+   - [Q1: How do you handle blockchain reorganizations?](#q1-how-do-you-handle-blockchain-reorganizations)
+   - [Q2: How do you scale the ingester for multiple chains?](#q2-how-do-you-scale-the-ingester-for-multiple-chains)
+   - [Q3: How do you ensure data consistency during high load?](#q3-how-do-you-ensure-data-consistency-during-high-load)
+   - [Q4: How would you optimize query performance for address transaction history?](#q4-how-would-you-optimize-query-performance-for-address-transaction-history)
+   - [Q5: How do you handle API rate limiting at scale?](#q5-how-do-you-handle-api-rate-limiting-at-scale)
+
+8. [Go Programming Concepts - Interview Guide](#go-programming-concepts---interview-guide)
+   - [1. Goroutines](#1-goroutines--used)
+   - [2. Context Propagation](#2-context-propagation--used-extensively)
+   - [3. Channels](#3-channels--used)
+   - [4. sync Package](#4-sync-package--used)
+   - [5. HTTP Serialization/Deserialization](#5-http-serializationdeserialization--used---api-service)
+   - [6. io Package (Reader, Writer, Stream Processing)](#6-io-package-reader-writer-stream-processing--limited-use)
+   - [7. Generics (Type Parameters)](#7-generics-type-parameters--not-used)
+   - [8. Testing with testify/require](#8-testing-with-testifyrequire--not-implemented)
+   - [9. Testcontainers](#9-testcontainers--not-implemented)
+   - [10. Google Go Style Guide (Idiomatic Go)](#10-google-go-style-guide-idiomatic-go--mostly-followed)
+
+9. [Go Concepts Summary Table](#go-concepts-summary-table)
+
+10. [Troubleshooting Guide](#troubleshooting-guide)
+    - [Issue: Ingester falling behind chain head](#issue-ingester-falling-behind-chain-head)
+    - [Issue: Processor consumer lag](#issue-processor-consumer-lag)
+    - [Issue: API slow response times](#issue-api-slow-response-times)
+
+11. [Performance Optimization](#performance-optimization)
+    - [Database Optimizations](#database-optimizations)
+    - [Go Performance Tips](#go-performance-tips)
+    - [Kafka Optimizations](#kafka-optimizations)
+
+12. [Frontend Development for Blockchain Engineers](#frontend-development-for-blockchain-engineers)
+    - [Overview: Frontend Landscape for DeFi/Web3](#overview-frontend-landscape-for-defiweb3)
+    - [Framework Comparison: React vs Next.js vs Vue](#framework-comparison-react-vs-nextjs-vs-vue)
+    - [Styling: Tailwind CSS vs Styled Components vs CSS Modules](#styling-tailwind-css-vs-styled-components-vs-css-modules)
+    - [State Management Comparison](#state-management-comparison)
+
+13. [Cross-Stack Learning: Transferable Skills & Concepts](#cross-stack-learning-transferable-skills--concepts)
+
+14. [Production Readiness](#production-readiness)
+
+15. [Additional Resources](#additional-resources)
+
+16. [Updates Log](#updates-log)
 
 ---
 
@@ -371,6 +1252,24 @@ brew install go
 docker --version  # Should be 20.10+
 go version        # Should be 1.21+
 ```
+
+#### Understanding Go Installation
+
+**Global Installation**:
+- Go binary: `/opt/homebrew/bin/go` (installed globally via Homebrew)
+- Go toolchain: Available system-wide for all projects
+- Module cache: `~/go/pkg/mod` (shared global cache for all downloaded modules)
+
+**Per-Project Dependencies**:
+- Each service has its own `go.mod` file defining dependencies and versions
+- When you run `go mod download`, modules are cached globally but tracked locally
+- This is the standard Go approach: global toolchain + global cache, but project-specific dependency tracking
+
+**Why this matters**:
+- You install Go once for the entire system
+- Module downloads are cached and reused across projects (saves bandwidth/time)
+- Each project independently controls its dependency versions via `go.mod`
+- No need for per-project Go installations (unlike Python virtual environments)
 
 ### Start the System
 ```bash
@@ -675,7 +1574,8 @@ We also track internal transactions to capture the full flow of funds through DE
 - ✅ Analytics views created
 - ⏳ Go parser implementation (Phase 3)
 - ⏳ RPC trace extraction (Phase 3)
-- ✅ **5 database tables** with 15 partitions
+- ✅ **10 database tables** with 35 partitions (6 in initial schema + 4 in calldata parsing)
+- ✅ **2 analytics views** for transaction and protocol insights
 - ✅ **20+ indexes** for performance
 - ✅ **20+ Makefile commands** for development
 - ✅ **Multi-chain support** for 5 blockchains
@@ -1251,6 +2151,656 @@ For efficiency, we could run multiple chains in one process with goroutines, but
 6. **Tiered pricing**: Free tier 100 req/sec, paid tiers 1000-10000 req/sec
 
 We use Redis for distributed state, so any API server can enforce limits consistently."
+
+---
+
+## Go Programming Concepts - Interview Guide
+
+This section covers key Go concepts used in this project, with examples from our codebase and interview-oriented explanations.
+
+### 1. Goroutines ⭐ (USED)
+
+**What**: Lightweight threads managed by Go runtime, much cheaper than OS threads.
+
+**Where Used in Project**:
+```go
+// services/ingester/main.go:97
+for _, chain := range chains {
+    ingester.wg.Add(1)
+    go ingester.ingestChain(chain)  // Spawn goroutine per chain
+}
+
+// services/ingester/main.go:87
+go func() {
+    <-sigChan
+    log.Println("Shutdown signal received...")
+    ingester.shutdown()
+}()
+```
+
+**Interview Points**:
+- **Lightweight**: Can spawn thousands (we spawn one per chain + signal handler)
+- **Stack size**: Starts with 2KB, grows/shrinks dynamically (OS threads = 1-2MB fixed)
+- **Scheduling**: M:N scheduling (M goroutines on N OS threads)
+- **Use case**: Parallel chain ingestion - each chain processes independently
+- **Communication**: Use channels for synchronization (see Channel section)
+
+**Common Interview Questions**:
+- Q: "Goroutine vs Thread?" → A: Goroutines are lighter (2KB vs 1MB), cooperatively scheduled
+- Q: "How many goroutines can you spawn?" → A: Hundreds of thousands (limited by memory)
+- Q: "When would you NOT use goroutines?" → A: CPU-bound work with limited cores (no benefit)
+
+---
+
+### 2. Context Propagation ⭐ (USED EXTENSIVELY)
+
+**What**: Carries deadlines, cancellation signals, and request-scoped values across API boundaries.
+
+**Where Used in Project**:
+```go
+// services/ingester/main.go:63 - Top-level context
+ctx, cancel := context.WithCancel(context.Background())
+ingester := &Ingester{
+    ctx:    ctx,
+    cancel: cancel,
+}
+
+// services/ingester/main.go:193 - Timeout for database operations
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+if err := db.PingContext(ctx); err != nil {
+    return nil, fmt.Errorf("failed to ping database: %w", err)
+}
+
+// services/ingester/main.go:280 - Propagated through RPC calls
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+header, err := client.HeaderByNumber(ctx, nil)
+```
+
+**Interview Points**:
+- **Cancellation propagation**: Parent context cancels → all child contexts cancel
+- **Timeout handling**: `WithTimeout` prevents hanging RPC calls
+- **Graceful shutdown**: `ingester.ctx.Done()` signals all goroutines to stop
+- **Best practice**: Always pass context as first parameter: `func DoWork(ctx context.Context, ...)`
+- **Never store context**: Contexts should flow through call stack, not stored in structs (except for long-lived services like our Ingester)
+
+**Context Types**:
+```go
+context.Background()              // Root context, never cancelled
+context.TODO()                    // Placeholder when unsure
+context.WithCancel(parent)        // Manual cancellation
+context.WithTimeout(parent, 5*s)  // Time-based cancellation
+context.WithDeadline(parent, t)   // Absolute deadline
+context.WithValue(parent, key, v) // Carry request-scoped values (use sparingly!)
+```
+
+**Common Interview Questions**:
+- Q: "Why pass context?" → A: Cancellation, timeouts, request tracing, distributed context
+- Q: "When to use WithTimeout vs WithCancel?" → A: WithTimeout for I/O, WithCancel for manual control
+- Q: "Is context safe for concurrent use?" → A: Yes, all methods are thread-safe
+
+**Real-world Example from Project**:
+```go
+// When shutdown signal received, all RPC calls stop
+select {
+case <-ing.ctx.Done():
+    log.Printf("🛑 Stopping block polling")
+    return
+case <-ticker.C:
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    header, err := client.HeaderByNumber(ctx, nil)  // Respects timeout
+    cancel()
+}
+```
+
+---
+
+### 3. Channels ⭐ (USED)
+
+**What**: Typed conduits for goroutines to communicate safely without explicit locks.
+
+**Where Used in Project**:
+```go
+// services/ingester/main.go:84 - Signal handling
+sigChan := make(chan os.Signal, 1)
+signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+// services/ingester/main.go:303 - WebSocket block subscription
+headers := make(chan *types.Header)
+sub, err := client.SubscribeNewHead(ing.ctx, headers)
+
+for {
+    select {
+    case <-ing.ctx.Done():
+        return
+    case err := <-sub.Err():
+        log.Printf("Subscription error: %v", err)
+    case header := <-headers:
+        processBlock(header.Number.Int64())
+    }
+}
+```
+
+**Interview Points**:
+- **Unbuffered vs Buffered**: 
+  - `make(chan T)` → Synchronous, sender blocks until receiver ready
+  - `make(chan T, N)` → Asynchronous, sender blocks only when buffer full
+- **Directional channels**: `chan<- T` (send-only), `<-chan T` (receive-only)
+- **Close semantics**: Only sender closes, receiver detects with `v, ok := <-ch`
+- **select statement**: Multiplex on multiple channels (like epoll/kqueue)
+
+**Channel Patterns**:
+```go
+// 1. Signal channel (done/cancel)
+done := make(chan struct{})
+go func() {
+    <-done  // Block until signal
+}()
+close(done)  // Signal all receivers
+
+// 2. Worker pool
+jobs := make(chan Job, 100)
+for i := 0; i < 10; i++ {
+    go worker(jobs)
+}
+
+// 3. Fan-out, fan-in (map-reduce)
+results := make(chan Result, numWorkers)
+for _, input := range inputs {
+    go func(in Input) {
+        results <- process(in)
+    }(input)
+}
+```
+
+**Common Interview Questions**:
+- Q: "Buffered vs unbuffered?" → A: Buffered = async (N capacity), unbuffered = sync handoff
+- Q: "When to close channel?" → A: Only sender closes, when no more values will be sent
+- Q: "What happens if you send to closed channel?" → A: Panic!
+- Q: "What happens if you receive from closed channel?" → A: Immediate return with zero value
+
+---
+
+### 4. sync Package ⭐ (USED)
+
+**What**: Low-level synchronization primitives for sharing memory between goroutines.
+
+**Where Used in Project**:
+```go
+// services/ingester/main.go:33 - Wait for all chains to finish
+type Ingester struct {
+    wg           sync.WaitGroup
+    shutdownOnce sync.Once
+}
+
+// services/ingester/main.go:95
+for _, chain := range chains {
+    ingester.wg.Add(1)
+    go ingester.ingestChain(chain)
+}
+ingester.wg.Wait()  // Block until all chains stop
+
+// services/ingester/main.go:564 - Ensure shutdown happens once
+func (ing *Ingester) shutdown() {
+    ing.shutdownOnce.Do(func() {
+        ing.cancel()
+        // Close all connections...
+    })
+}
+```
+
+**Interview Points**:
+
+**sync.WaitGroup**:
+- Use when you need to wait for multiple goroutines to finish
+- `Add(n)` before spawning, `Done()` in goroutine, `Wait()` to block
+- Counter-based (Add increments, Done decrements, Wait blocks until 0)
+
+**sync.Once**:
+- Ensures function runs exactly once, even with concurrent calls
+- Use for lazy initialization, singletons, shutdown logic
+- Thread-safe, no explicit locking needed
+
+**sync.Mutex** (NOT USED - but important):
+```go
+type SafeCounter struct {
+    mu    sync.Mutex
+    count map[string]int
+}
+
+func (c *SafeCounter) Inc(key string) {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    c.count[key]++
+}
+```
+
+**sync.RWMutex** (NOT USED - but important):
+```go
+type Cache struct {
+    mu    sync.RWMutex
+    items map[string]interface{}
+}
+
+func (c *Cache) Get(key string) interface{} {
+    c.mu.RLock()         // Multiple readers allowed
+    defer c.mu.RUnlock()
+    return c.items[key]
+}
+
+func (c *Cache) Set(key string, value interface{}) {
+    c.mu.Lock()          // Exclusive write lock
+    defer c.mu.Unlock()
+    c.items[key] = value
+}
+```
+
+**Common Interview Questions**:
+- Q: "Mutex vs RWMutex?" → A: RWMutex allows multiple readers, one writer (read-heavy workloads)
+- Q: "Channel vs Mutex?" → A: Channel = communication, Mutex = shared memory protection
+- Q: "WaitGroup vs sync.Cond?" → A: WaitGroup = wait for N tasks, Cond = complex signaling
+
+**Why We Don't Need Mutex**:
+- Our design uses goroutines with isolated data (each chain has own state)
+- Context cancellation handles coordination, not shared memory
+- Database handles concurrency with transactions
+- If we had shared cache, we'd need RWMutex
+
+---
+
+### 5. HTTP Serialization/Deserialization ⭐ (USED - API Service)
+
+**What**: Converting Go structs to/from JSON for HTTP APIs.
+
+**Where Used in Project**:
+```go
+// services/api/main.go - Response types
+type Chain struct {
+    ChainID     int64     `json:"chain_id"`
+    Name        string    `json:"name"`
+    IsActive    bool      `json:"is_active"`
+    LastBlock   *int64    `json:"last_block,omitempty"`
+    CreatedAt   time.Time `json:"created_at"`
+}
+
+// services/api/main.go - Handler
+func (api *API) handleGetChains(c *gin.Context) {
+    rows, err := api.db.Query(query)
+    // ... scan rows
+    chains = append(chains, chain)
+    
+    c.JSON(http.StatusOK, chains)  // Auto-serialization
+}
+
+// Client-side deserialization
+var chains []Chain
+json.Unmarshal(body, &chains)
+```
+
+**Interview Points**:
+
+**Struct Tags**:
+```go
+type User struct {
+    ID        int    `json:"id" db:"user_id"`           // JSON and SQL names differ
+    Email     string `json:"email" validate:"required"`  // Multiple tags
+    Password  string `json:"-"`                          // Omit from JSON
+    IsAdmin   bool   `json:"is_admin,omitempty"`        // Omit if zero value
+}
+```
+
+**Serialization Methods**:
+```go
+// 1. Marshal (struct → JSON bytes)
+data, err := json.Marshal(user)
+
+// 2. Encoder (stream to io.Writer)
+json.NewEncoder(w).Encode(user)  // More efficient for HTTP
+
+// 3. Unmarshal (JSON bytes → struct)
+var user User
+json.Unmarshal(data, &user)
+
+// 4. Decoder (stream from io.Reader)
+json.NewDecoder(r.Body).Decode(&user)
+```
+
+**Common Interview Questions**:
+- Q: "Marshal vs Encoder?" → A: Marshal returns bytes, Encoder writes to stream (HTTP response)
+- Q: "What is omitempty?" → A: Omits field if zero value (0, false, nil, empty string)
+- Q: "How to handle time.Time?" → A: Marshals to RFC3339 by default, can customize with MarshalJSON
+- Q: "Case sensitivity?" → A: JSON keys are case-sensitive, Go uses exact match (case-insensitive fallback)
+
+---
+
+### 6. io Package (Reader, Writer, Stream Processing) ⚠️ (LIMITED USE)
+
+**What**: Interfaces for I/O operations, enabling composition and streaming.
+
+**Where Used in Project**: Minimal direct usage, mostly through libraries (database/sql, HTTP).
+
+**Core Interfaces**:
+```go
+type Reader interface {
+    Read(p []byte) (n int, err error)
+}
+
+type Writer interface {
+    Write(p []byte) (n int, err error)
+}
+
+type ReadWriter interface {
+    Reader
+    Writer
+}
+```
+
+**Common Patterns** (Not in our project, but interview-relevant):
+```go
+// 1. Copy streams
+io.Copy(dst Writer, src Reader)  // Efficient, no buffering
+
+// 2. Read all (use sparingly, loads entire content to memory)
+body, err := io.ReadAll(resp.Body)
+
+// 3. Limit reader (prevent memory exhaustion)
+limited := io.LimitReader(resp.Body, 1<<20)  // Max 1MB
+
+// 4. Tee reader (duplicate stream)
+tee := io.TeeReader(reader, logWriter)  // Read from reader, copy to logWriter
+
+// 5. Pipe (connect reader/writer)
+pr, pw := io.Pipe()
+go func() {
+    pw.Write(data)
+    pw.Close()
+}()
+io.Copy(os.Stdout, pr)
+```
+
+**Why We Don't Use io Package Heavily**:
+- Database library (`database/sql`) abstracts streaming
+- Gin framework handles HTTP request/response bodies
+- Blockchain data comes through `go-ethereum` library
+- If we added CSV export or file processing, we'd use io.Reader/Writer
+
+**Common Interview Questions**:
+- Q: "Why use io.Reader instead of []byte?" → A: Streaming (low memory), composition, testability
+- Q: "What is io.EOF?" → A: Sentinel error indicating end of stream
+- Q: "How to chain readers?" → A: Wrap them: `gzip.NewReader(file)` → `io.LimitReader(gzipReader, size)`
+
+---
+
+### 7. Generics (Type Parameters) ❌ (NOT USED)
+
+**What**: Parametric polymorphism added in Go 1.18, allows type-safe generic functions/structs.
+
+**Why Not Used**:
+- Project predates heavy generic adoption patterns
+- `interface{}` or code generation sufficient for our use cases
+- Database libraries use reflection, not generics
+- Blockchain types (`*big.Int`, `common.Address`) are concrete
+
+**Example Use Cases** (If we refactored):
+```go
+// Generic cache
+type Cache[K comparable, V any] struct {
+    mu    sync.RWMutex
+    items map[K]V
+}
+
+func (c *Cache[K, V]) Get(key K) (V, bool) {
+    c.mu.RLock()
+    defer c.mu.RUnlock()
+    val, ok := c.items[key]
+    return val, ok
+}
+
+// Usage
+blockCache := Cache[int64, *Block]{}
+txCache := Cache[string, *Transaction]{}
+
+// Generic filter
+func Filter[T any](slice []T, predicate func(T) bool) []T {
+    result := make([]T, 0)
+    for _, item := range slice {
+        if predicate(item) {
+            result = append(result, item)
+        }
+    }
+    return result
+}
+
+// Usage
+activeChains := Filter(chains, func(c Chain) bool { return c.IsActive })
+```
+
+**Common Interview Questions**:
+- Q: "When to use generics vs interfaces?" → A: Generics = compile-time type safety, interfaces = runtime polymorphism
+- Q: "Performance difference?" → A: Generics can be faster (no heap allocation for small types)
+- Q: "What is `any` constraint?" → A: Alias for `interface{}`, means "any type"
+- Q: "What is `comparable` constraint?" → A: Types that support == and != (used for map keys)
+
+---
+
+### 8. Testing with testify/require ❌ (NOT IMPLEMENTED)
+
+**What**: Popular testing library with assertions, mocking, and test suites.
+
+**Why Not Implemented**: MVP phase prioritized feature delivery over test coverage.
+
+**Would Look Like** (If we added tests):
+```go
+// services/ingester/ingester_test.go
+package main
+
+import (
+    "testing"
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
+)
+
+func TestIngestBlock(t *testing.T) {
+    // Setup
+    db := setupTestDB(t)
+    defer db.Close()
+    
+    ingester := &Ingester{db: db}
+    
+    // Execute
+    err := ingester.processBlock(mockChain, 12345)
+    
+    // Assert
+    require.NoError(t, err)  // Fail fast if error
+    assert.Equal(t, 1, getBlockCount(db))
+    assert.Equal(t, int64(12345), getLastCheckpoint(db))
+}
+
+func TestRateLimiter(t *testing.T) {
+    limiter := NewTokenBucket(10, 5)  // 10 capacity, 5/sec refill
+    
+    // Allow first 10 requests (drain bucket)
+    for i := 0; i < 10; i++ {
+        assert.True(t, limiter.Allow(), "request %d should be allowed", i)
+    }
+    
+    // 11th request should be denied
+    assert.False(t, limiter.Allow())
+}
+```
+
+**Common Interview Questions**:
+- Q: "assert vs require?" → A: require stops test immediately, assert continues
+- Q: "Table-driven tests?" → A: Loop over test cases slice (Go idiom)
+- Q: "Test coverage tools?" → A: `go test -cover`, `go tool cover -html=coverage.out`
+
+---
+
+### 9. Testcontainers ❌ (NOT IMPLEMENTED)
+
+**What**: Library for spinning up Docker containers in tests (real databases, Redis, Kafka).
+
+**Why Not Implemented**: No integration tests yet, would add for production-readiness.
+
+**Would Look Like**:
+```go
+import (
+    "testing"
+    "github.com/testcontainers/testcontainers-go"
+    "github.com/testcontainers/testcontainers-go/wait"
+)
+
+func TestWithPostgres(t *testing.T) {
+    ctx := context.Background()
+    
+    // Start PostgreSQL container
+    req := testcontainers.ContainerRequest{
+        Image:        "postgres:15",
+        ExposedPorts: []string{"5432/tcp"},
+        Env: map[string]string{
+            "POSTGRES_PASSWORD": "test",
+        },
+        WaitingFor: wait.ForLog("database system is ready"),
+    }
+    
+    container, err := testcontainers.GenericContainer(ctx, req)
+    require.NoError(t, err)
+    defer container.Terminate(ctx)
+    
+    // Get connection string
+    host, _ := container.Host(ctx)
+    port, _ := container.MappedPort(ctx, "5432")
+    
+    // Run migrations
+    db := connectDB(fmt.Sprintf("postgres://postgres:test@%s:%s/test", host, port))
+    runMigrations(db)
+    
+    // Run tests against real database
+    // ...
+}
+```
+
+**Benefits**:
+- Test against real database (not mocks)
+- Catch SQL syntax errors
+- Test migrations
+- Reproducible environment
+
+**Common Interview Questions**:
+- Q: "Why not mock database?" → A: Mocks can't catch SQL errors, schema issues, performance problems
+- Q: "Isn't it slow?" → A: Yes, but worth it for integration tests (run unit tests fast, integration slower)
+- Q: "When to use?" → A: Integration tests, CI/CD, database migration testing
+
+---
+
+### 10. Google Go Style Guide (Idiomatic Go) ⭐ (MOSTLY FOLLOWED)
+
+**What**: Official style guide for writing idiomatic, maintainable Go code.
+
+**Key Principles Followed in Project**:
+
+**✅ 1. Error Wrapping with fmt.Errorf**:
+```go
+// services/ingester/main.go:184
+if err != nil {
+    return nil, fmt.Errorf("failed to open database: %w", err)
+}
+```
+- Use `%w` verb to wrap errors (enables `errors.Is`, `errors.As`)
+- Provides context at each layer
+
+**✅ 2. Early Returns (Guard Clauses)**:
+```go
+func (api *API) handleGetChain(c *gin.Context) {
+    chainID, err := strconv.ParseInt(c.Param("chain_id"), 10, 64)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid chain ID"})
+        return  // Early return on error
+    }
+    
+    // Happy path continues at normal indentation
+    var chain Chain
+    err = api.db.QueryRow(`...`, chainID).Scan(...)
+}
+```
+
+**✅ 3. Named Return Values (Sparingly)**:
+```go
+func connectDB() (*sql.DB, error) {  // Unnamed returns (preferred)
+    db, err := sql.Open("postgres", dbURL)
+    if err != nil {
+        return nil, fmt.Errorf("failed to open: %w", err)
+    }
+    return db, nil
+}
+```
+- Only use named returns for documentation or complex functions
+
+**✅ 4. defer for Cleanup**:
+```go
+// services/ingester/main.go:193
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()  // Ensures cancel is called
+```
+
+**✅ 5. Package Naming**:
+- `package main` for executables
+- Short, lowercase, no underscores: `models`, `config`
+
+**❌ 6. Lacks Commentary**:
+- Should add godoc comments for exported functions
+- Example: `// Ingester manages blockchain data collection from multiple chains.`
+
+**✅ 7. Struct Initialization**:
+```go
+ingester := &Ingester{
+    db:        db,
+    chains:    chains,
+    clients:   make(map[int64]*ethclient.Client),
+    ctx:       ctx,
+    cancel:    cancel,
+}
+```
+- Named fields (not positional)
+- Clear, readable
+
+**✅ 8. Error Messages**:
+- Lowercase, no punctuation: `"failed to open database"`
+- Context-rich: Include chain name, block number
+
+**Google Go Style Interview Points**:
+- **Simplicity over cleverness**: Readable code > clever tricks
+- **Composition over inheritance**: Use interfaces, not class hierarchies
+- **"Accept interfaces, return structs"**: Functions take `io.Reader`, return `*User`
+- **Package layout**: `cmd/`, `internal/`, `pkg/` for structure
+- **Avoid `init()`**: Explicit initialization preferred
+
+**Common Interview Questions**:
+- Q: "Go idioms vs other languages?" → A: Errors are values, composition, interfaces, channels
+- Q: "What is 'accept interfaces, return structs'?" → A: Callers can pass anything implementing interface, you return concrete type
+- Q: "Why no exceptions?" → A: Explicit error handling, errors are values
+
+---
+
+## Go Concepts Summary Table
+
+| Concept | Status | Where Used | Interview Importance |
+|---------|--------|------------|---------------------|
+| **Goroutines** | ✅ Used | Multi-chain ingestion | ⭐⭐⭐ High |
+| **Context** | ✅ Extensive | Timeouts, cancellation | ⭐⭐⭐ High |
+| **Channels** | ✅ Used | Signals, subscriptions | ⭐⭐⭐ High |
+| **sync.WaitGroup** | ✅ Used | Goroutine coordination | ⭐⭐⭐ High |
+| **sync.Once** | ✅ Used | Shutdown guarantee | ⭐⭐ Medium |
+| **sync.Mutex** | ❌ Not used | N/A | ⭐⭐⭐ High (still important!) |
+| **HTTP Serialization** | ✅ Used | API responses | ⭐⭐ Medium |
+| **io Package** | ⚠️ Limited | Indirect via libs | ⭐⭐ Medium |
+| **Generics** | ❌ Not used | N/A | ⭐ Low (too new) |
+| **testify/require** | ❌ No tests | N/A | ⭐⭐⭐ High (production need) |
+| **Testcontainers** | ❌ Not implemented | N/A | ⭐⭐ Medium |
+| **Idiomatic Go** | ✅ Mostly | Error handling, defer | ⭐⭐⭐ High |
+
+**Key Takeaway for Interviews**:
+This project demonstrates production-grade Go concurrency (goroutines, contexts, channels, sync primitives) applied to a real-world blockchain indexing system. The missing pieces (tests, generics, advanced io) are intentional MVP trade-offs, not knowledge gaps.
 
 ---
 
