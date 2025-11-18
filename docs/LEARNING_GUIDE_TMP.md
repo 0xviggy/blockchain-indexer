@@ -4,13 +4,16 @@ This document captures all setup steps, learning points, architectural decisions
 
 > **📝 Documentation Practice**: As we build this system, every implementation step, decision, and learning point is documented here in real-time. This serves as both a reference and interview preparation material.
 
+> **💡 Navigation Tip**: All major sections are now collapsible! Click on any section heading to expand/collapse it for easier navigation.
+
 ---
 
 ## 🎯 Technology Stack Deep Dive
 
-### Backend Technologies
+<details>
+<summary><strong>Backend Technologies</strong></summary>
 
-#### Go Programming Language
+### Go Programming Language
 **Why Go**: Chosen for blockchain indexing due to excellent concurrency primitives, strong blockchain ecosystem (go-ethereum), and faster development velocity compared to Rust.
 
 **Key Features Used**:
@@ -31,6 +34,9 @@ for _, chain := range chains {
 // Wait for shutdown signal
 <-ctx.Done()
 ```
+
+<details>
+<summary><strong>PostgreSQL Database</strong></summary>
 
 #### PostgreSQL Database
 **Why PostgreSQL**: ACID guarantees, mature partitioning support, excellent query planner, and wide operational knowledge.
@@ -70,6 +76,11 @@ CREATE TABLE blocks_polygon PARTITION OF blocks
 3. Parallel writes: Each chain writes to different partition (no lock contention)
 4. Easy maintenance: Drop old chain data without affecting others
 
+</details>
+
+<details>
+<summary><strong>Redis Cache</strong></summary>
+
 #### Redis Cache
 **Why Redis**: Sub-millisecond latency for frequently accessed data, built-in data structures, pub/sub for real-time updates.
 
@@ -93,6 +104,11 @@ if cached, err := rdb.Get(ctx, key).Result(); err == nil {
 }
 block = fetchFromDB(chainID, blockHash)
 ```
+
+</details>
+
+<details>
+<summary><strong>Kafka & Event Streaming</strong></summary>
 
 #### Kafka (Redpanda)
 **Why Kafka**: Decouples ingestion from processing, replay capability, scales horizontally, industry standard for event streaming.
@@ -123,7 +139,15 @@ topics:
     retention: 720h  # 30 days (important for auditing)
 ```
 
-### Frontend Technologies
+</details>
+
+</details>
+
+<details>
+<summary><strong>Frontend Technologies</strong></summary>
+
+<details>
+<summary><strong>React 18</strong></summary>
 
 #### React 18
 **Why React**: Component-based architecture, huge ecosystem, excellent TypeScript support, easy to find developers.
@@ -133,6 +157,11 @@ topics:
 - **Context**: Share selected chain across components
 - **Suspense**: Loading states for async data
 - **Error Boundaries**: Graceful error handling
+
+</details>
+
+<details>
+<summary><strong>TypeScript</strong></summary>
 
 #### TypeScript
 **Why TypeScript**: Catch bugs at compile time, better IDE support, safer refactoring, self-documenting code.
@@ -161,6 +190,11 @@ async function getBlocks(chainId: number, limit: number): Promise<Block[]> {
 }
 ```
 
+</details>
+
+<details>
+<summary><strong>Vite</strong></summary>
+
 #### Vite
 **Why Vite**: Instant HMR (hot module replacement), faster builds than Webpack, simpler configuration, ESM-native.
 
@@ -168,6 +202,11 @@ async function getBlocks(chainId: number, limit: number): Promise<Block[]> {
 - Development: Serves source files as ES modules (no bundling)
 - Production: Rollup bundling with code splitting
 - Plugins: React plugin for JSX transform, TypeScript support
+
+</details>
+
+<details>
+<summary><strong>React Query (TanStack Query)</strong></summary>
 
 #### React Query (TanStack Query)
 **Why React Query**: Manages server state lifecycle (loading, caching, refetching), automatic background updates, optimistic UI.
@@ -193,6 +232,11 @@ const mutation = useMutation({
     }
 });
 ```
+
+</details>
+
+<details>
+<summary><strong>Zustand</strong></summary>
 
 #### Zustand
 **Why Zustand**: Simpler than Redux (no actions/reducers), TypeScript-first, minimal boilerplate, devtools support.
@@ -227,6 +271,11 @@ function ChainSwitcher() {
 }
 ```
 
+</details>
+
+<details>
+<summary><strong>Tailwind CSS</strong></summary>
+
 #### Tailwind CSS
 **Why Tailwind**: Utility-first reduces CSS bloat, dark mode built-in, responsive by default, component libraries available.
 
@@ -245,7 +294,15 @@ function ChainSwitcher() {
 </div>
 ```
 
-### Blockchain Technologies
+</details>
+
+</details>
+
+<details>
+<summary><strong>Blockchain Technologies</strong></summary>
+
+<details>
+<summary><strong>go-ethereum (geth)</strong></summary>
 
 #### go-ethereum (geth)
 **Why go-ethereum**: Official Go implementation, most stable RPC client, used by node operators, extensive documentation.
@@ -282,6 +339,11 @@ for {
 }
 ```
 
+</details>
+
+<details>
+<summary><strong>Multi-Chain Support</strong></summary>
+
 #### Multi-Chain Support
 **EVM Chains Supported**: Ethereum, Polygon, Arbitrum, Optimism, Base
 
@@ -309,7 +371,17 @@ var chains = []ChainConfig{
 }
 ```
 
+</details>
+
+</details>
+
+<details>
+<summary><strong>Infrastructure & DevOps</strong></summary>
+
 ### Infrastructure & DevOps
+
+<details>
+<summary><strong>Docker Compose</strong></summary>
 
 #### Docker Compose
 **Why Docker Compose**: Simple local development, multi-container orchestration, easy cleanup, matches production Kubernetes.
@@ -345,6 +417,11 @@ volumes:
 - **Production**: Kubernetes (scaling, self-healing, rolling updates)
 - **CI/CD**: Docker Compose (test environment)
 
+</details>
+
+<details>
+<summary><strong>Makefile</strong></summary>
+
 #### Makefile
 **Why Makefile**: Universal task runner, self-documenting commands, shell integration, no additional dependencies.
 
@@ -376,7 +453,15 @@ setup: docker-up
 	@echo "Setup complete!"
 ```
 
-### Architecture Patterns
+</details>
+
+</details>
+
+<details>
+<summary><strong>Architecture Patterns</strong></summary>
+
+<details>
+<summary><strong>Microservices</strong></summary>
 
 #### Microservices
 **Why Microservices**: Independent scaling, isolated failures, technology flexibility, easier reasoning about each service.
@@ -435,6 +520,11 @@ API responsibilities:
 }
 ```
 
+</details>
+
+<details>
+<summary><strong>CQRS (Command Query Responsibility Segregation)</strong></summary>
+
 #### CQRS (Command Query Responsibility Segregation)
 **Why CQRS**: Optimize writes and reads separately, simpler code, better performance.
 
@@ -455,6 +545,11 @@ Read Model (API):
 - Redis cache for hot data
 ```
 
+</details>
+
+<details>
+<summary><strong>Database Partitioning</strong></summary>
+
 #### Database Partitioning
 **Why Partition**: Query performance, parallel operations, easier maintenance.
 
@@ -468,6 +563,11 @@ Read Model (API):
 - Clear partition boundaries
 - Easy to add new chains
 - Parallel writes (different partitions)
+
+</details>
+
+<details>
+<summary><strong>Graceful Degradation</strong></summary>
 
 #### Graceful Degradation
 **Why**: System should continue working even when components fail.
@@ -486,6 +586,11 @@ if wsClient, err := dialWebSocket(url); err == nil {
     pollBlocks(httpClient, 12*time.Second)
 }
 ```
+
+</details>
+
+<details>
+<summary><strong>Checkpointing</strong></summary>
 
 #### Checkpointing
 **Why**: Resume processing from last successful point after restart/failure.
@@ -522,9 +627,16 @@ tx.Exec(`
 `, chainID, blockNumber)
 ```
 
+</details>
+
+</details>
+
 ---
 
 ## 📚 Docker & Containerization Deep Dive
+
+<details>
+<summary><strong>Docker Fundamentals</strong></summary>
 
 ### Docker Fundamentals
 
@@ -673,6 +785,11 @@ docker network inspect indexer-network | jq '.[0].Containers'
 docker network connect indexer-network my-container
 ```
 
+</details>
+
+<details>
+<summary><strong>Docker Volumes</strong></summary>
+
 #### Docker Volumes
 
 **Volume Types**:
@@ -748,6 +865,11 @@ services:
       - ./src:/app/src:delegated  # Host → Container (writes delayed)
       - ./cache:/app/cache:cached  # Container → Host (reads cached)
 ```
+
+</details>
+
+<details>
+<summary><strong>Debugging Containers</strong></summary>
 
 #### Debugging Containers
 
@@ -974,6 +1096,11 @@ spec:
 - **Q: How would you scale the ingester service?**
   - A: Partition chains across pods (Pod 1: ETH+Polygon, Pod 2: Arbitrum+Base), use Kubernetes Jobs for catch-up mode, scale vertically for real-time ingestion.
 
+</details>
+
+<details>
+<summary><strong>PostgreSQL Advanced Topics</strong></summary>
+
 ### PostgreSQL Advanced Topics
 
 #### Indexing Strategies
@@ -1087,6 +1214,11 @@ consumer := kafka.NewConsumer(&kafka.ConfigMap{
 - **Q: How does Kafka handle consumer failures?**
   - A: Consumer heartbeat mechanism. If consumer stops heartbeat, coordinator triggers rebalance and reassigns partitions to healthy consumers. Offset commits allow resuming from last processed message.
 
+</details>
+
+<details>
+<summary><strong>Redis Patterns</strong></summary>
+
 ### Redis Patterns
 
 #### Caching Strategies
@@ -1131,6 +1263,11 @@ func SaveBlock(block *Block) error {
 - **Q: What's the thundering herd problem?**
   - A: Many requests hit expired cache key simultaneously, all query DB in parallel. Solution: Lock with Redis SETNX or use probabilistic early expiration.
 
+</details>
+
+<details>
+<summary><strong>React & Next.js Patterns</strong></summary>
+
 ### React & Next.js Patterns
 
 #### State Management
@@ -1170,6 +1307,11 @@ function useBlockStream(chainId: number) {
   - **CSR (useEffect)**: Render in browser (dashboards, user-specific)
   - **ISR (revalidate)**: SSG with periodic regeneration (best of both)
 
+</details>
+
+<details>
+<summary><strong>Node.js & TypeScript</strong></summary>
+
 ### Node.js & TypeScript
 
 #### Async Patterns
@@ -1202,6 +1344,11 @@ const [block1, block2] = await Promise.all([
 
 - **Q: How do you avoid callback hell?**
   - A: Use Promises or async/await, create named functions, use libraries like async.js for complex flows.
+
+</details>
+
+<details>
+<summary><strong>Go Modules & Dependency Management</strong></summary>
 
 ### Go Modules & Dependency Management
 
@@ -1543,6 +1690,8 @@ go list -m all
 # Show dependency tree
 go mod graph | grep github.com/specific/package
 ```
+
+</details>
 
 ---
 
@@ -2526,6 +2675,9 @@ Blockchain → Ingester → Kafka → Processor → PostgreSQL → API → Users
 
 ## Setup Steps & Commands
 
+<details>
+<summary><strong>Phase 1: Infrastructure Setup (COMPLETED ✅)</strong></summary>
+
 ### Phase 1: Infrastructure Setup (COMPLETED ✅)
 **Date**: 2025-11-14  
 **What we built**: Docker Compose setup with PostgreSQL, Redis, and Kafka
@@ -2808,6 +2960,11 @@ We also track internal transactions to capture the full flow of funds through DE
 **Time to setup**: 2 minutes (after Docker installed)  
 **Next**: Build Ingester service to start fetching blocks
 
+</details>
+
+<details>
+<summary><strong>Troubleshooting & Web UIs</strong></summary>
+
 #### Troubleshooting:
 
 ```bash
@@ -2842,7 +2999,12 @@ make kafka-topics
 - **Kafka UI**: http://localhost:8080 - View topics, messages, consumer groups
 - **pgAdmin**: http://localhost:5050 - Database GUI (login: admin@indexer.local / admin)
 
+</details>
+
 ---
+
+<details>
+<summary><strong>Phase 2: Ingester Service (NEXT)</strong></summary>
 
 ### Phase 2: Ingester Service (NEXT)
 **Status**: Not started  
@@ -2855,7 +3017,12 @@ make kafka-topics
 4. Checkpoint management
 5. Kafka producer
 
+</details>
+
 ---
+
+<details>
+<summary><strong>Legacy Instructions (for reference)</strong></summary>
 
 ### Docker Infrastructure (Legacy Instructions)
 ```bash
@@ -2896,9 +3063,14 @@ make run-api
 make docker-up
 ```
 
+</details>
+
 ---
 
 ## Key Technical Concepts
+
+<details>
+<summary><strong>1. Message Parsing Overview</strong></summary>
 
 ### 1. Message Parsing Overview
 
@@ -3033,6 +3205,11 @@ if receipt.Status == 0 {
 - Analytics on smart contract issues
 - Improve UX by showing why tx failed
 
+</details>
+
+<details>
+<summary><strong>2. Blockchain Reorg Handling</strong></summary>
+
 ### 2. Blockchain Reorg Handling
 
 **What is a Reorg?**
@@ -3058,6 +3235,11 @@ if storedBlock.Hash != newBlock.ParentHash {
 - Polygon has shorter finality: ~256 blocks
 - Always track parent hashes to detect reorgs
 - Use database transactions for atomic rollback
+
+</details>
+
+<details>
+<summary><strong>3. Event Parsing (ERC20 Transfer Example)</strong></summary>
 
 ### 3. Event Parsing (ERC20 Transfer Example)
 
@@ -3096,6 +3278,11 @@ func parseTransfer(log *types.Log) (*TokenTransfer, error) {
 - ABI encoding/decoding is crucial for custom events
 - Use go-ethereum's `abigen` for type-safe parsing
 
+</details>
+
+<details>
+<summary><strong>4. Database Partitioning Strategy</strong></summary>
+
 ### 4. Database Partitioning Strategy
 
 **Why Partition?**
@@ -3124,6 +3311,11 @@ CREATE TABLE blocks_eth_1m_to_2m PARTITION OF blocks
 - Query planner automatically selects correct partition
 - Can drop old partitions for archival
 - Composite key (chain_id, block_number) enables multi-chain partitioning
+
+</details>
+
+<details>
+<summary><strong>5. Rate Limiting with Token Bucket</strong></summary>
 
 ### 5. Rate Limiting with Token Bucket
 
@@ -3167,6 +3359,11 @@ func (tb *TokenBucket) Allow() bool {
 - Can implement per-IP and per-API-key limiting
 - Use Redis for distributed rate limiting
 
+</details>
+
+<details>
+<summary><strong>6. Kafka Message Ordering</strong></summary>
+
 ### 6. Kafka Message Ordering
 
 **Challenge**: Maintain block ordering across consumers
@@ -3190,9 +3387,14 @@ producer.SendMessage(&sarama.ProducerMessage{
 - Consumer group ensures each partition is consumed by one consumer
 - Enables parallel processing across chains
 
+</details>
+
 ---
 
 ## Design Decisions & Trade-offs
+
+<details>
+<summary><strong>1. Language Choice: Go vs Rust ⭐</strong></summary>
 
 ### 1. Language Choice: Go vs Rust ⭐
 
@@ -3229,6 +3431,11 @@ producer.SendMessage(&sarama.ProducerMessage{
 
 **Interview Answer**: "We chose Go because blockchain indexing is I/O-bound, not CPU-bound. We spend most time waiting for network responses and database writes. Go's goroutines handle this well, and go-ethereum is the canonical implementation with excellent documentation. The ~20% performance difference with Rust doesn't justify slower development velocity and hiring challenges. Major indexers like Etherscan and The Graph use Go successfully."
 
+</details>
+
+<details>
+<summary><strong>2. Message Broker: Kafka vs RabbitMQ</strong></summary>
+
 ### 2. Message Broker: Kafka vs RabbitMQ
 
 **Decision**: Kafka
@@ -3242,6 +3449,11 @@ producer.SendMessage(&sarama.ProducerMessage{
 - ❌ Higher resource usage
 
 **Interview Answer**: "Kafka is better suited for append-only event streams like blockchain data. The replay capability is crucial for handling reorgs, and partitioning enables parallel processing across chains. RabbitMQ excels at task queues with complex routing, which isn't our use case."
+
+</details>
+
+<details>
+<summary><strong>3. Database: PostgreSQL vs TimescaleDB vs Cassandra</strong></summary>
 
 ### 3. Database: PostgreSQL vs TimescaleDB vs Cassandra
 
@@ -3257,6 +3469,11 @@ producer.SendMessage(&sarama.ProducerMessage{
 
 **Interview Answer**: "PostgreSQL offers the right balance of consistency, query flexibility, and operational maturity. The data has relational aspects (blocks → transactions → events), and users need complex queries. Native partitioning handles the time-series aspect adequately. We can shard by chain_id if we need horizontal scaling later."
 
+</details>
+
+<details>
+<summary><strong>4. Monorepo vs Separate Repos</strong></summary>
+
 ### 4. Monorepo vs Separate Repos
 
 **Decision**: Monorepo
@@ -3271,9 +3488,14 @@ producer.SendMessage(&sarama.ProducerMessage{
 
 **Interview Answer**: "A monorepo makes sense for tightly coupled microservices. All three services share data models and evolve together. Separate repos would require versioning shared packages and coordinating deployments. As the team grows, we could split out services."
 
+</details>
+
 ---
 
 ## Common Interview Questions
+
+<details>
+<summary><strong>Q1: How do you handle blockchain reorganizations?</strong></summary>
 
 ### Q1: How do you handle blockchain reorganizations?
 
@@ -3287,6 +3509,11 @@ We then:
 4. Kafka's replay capability allows the processor to re-process affected events
 
 For production, we only mark blocks as 'finalized' after the chain-specific finality threshold (e.g., 13 minutes for Ethereum, 256 blocks for Polygon)."
+
+</details>
+
+<details>
+<summary><strong>Q2: How do you scale the ingester for multiple chains?</strong></summary>
 
 ### Q2: How do you scale the ingester for multiple chains?
 
@@ -3302,6 +3529,11 @@ Each ingester publishes to a chain-specific Kafka topic (e.g., 'eth.blocks', 'po
 - Chain-specific monitoring and alerting
 
 For efficiency, we could run multiple chains in one process with goroutines, but separate deployments provide better isolation."
+
+</details>
+
+<details>
+<summary><strong>Q3: How do you ensure data consistency during high load?</strong></summary>
 
 ### Q3: How do you ensure data consistency during high load?
 
@@ -3323,6 +3555,11 @@ For efficiency, we could run multiple chains in one process with goroutines, but
 5. **Backpressure handling**: Kafka acts as a buffer between ingestion and processing, preventing overload
 
 6. **Connection pooling**: Limit concurrent database connections to prevent saturation"
+
+</details>
+
+<details>
+<summary><strong>Q4: How would you optimize query performance for address transaction history?</strong></summary>
 
 ### Q4: How would you optimize query performance for address transaction history?
 
@@ -3354,6 +3591,11 @@ For efficiency, we could run multiple chains in one process with goroutines, but
 
 6. **Denormalization**: For high-value addresses, maintain a separate summary table"
 
+</details>
+
+<details>
+<summary><strong>Q5: How do you handle API rate limiting at scale?</strong></summary>
+
 ### Q5: How do you handle API rate limiting at scale?
 
 **Answer**:
@@ -3375,11 +3617,16 @@ For efficiency, we could run multiple chains in one process with goroutines, but
 
 We use Redis for distributed state, so any API server can enforce limits consistently."
 
+</details>
+
 ---
 
 ## Go Programming Concepts - Interview Guide
 
 This section covers key Go concepts used in this project, with examples from our codebase and interview-oriented explanations.
+
+<details>
+<summary><strong>1. Goroutines ⭐ (USED)</strong></summary>
 
 ### 1. Goroutines ⭐ (USED)
 
@@ -3413,7 +3660,10 @@ go func() {
 - Q: "How many goroutines can you spawn?" → A: Hundreds of thousands (limited by memory)
 - Q: "When would you NOT use goroutines?" → A: CPU-bound work with limited cores (no benefit)
 
----
+</details>
+
+<details>
+<summary><strong>2. Context Propagation ⭐ (USED EXTENSIVELY)</strong></summary>
 
 ### 2. Context Propagation ⭐ (USED EXTENSIVELY)
 
@@ -3476,7 +3726,10 @@ case <-ticker.C:
 }
 ```
 
----
+</details>
+
+<details>
+<summary><strong>3. Channels ⭐ (USED)</strong></summary>
 
 ### 3. Channels ⭐ (USED)
 
@@ -3542,7 +3795,10 @@ for _, input := range inputs {
 - Q: "What happens if you send to closed channel?" → A: Panic!
 - Q: "What happens if you receive from closed channel?" → A: Immediate return with zero value
 
----
+</details>
+
+<details>
+<summary><strong>4. sync Package ⭐ (USED)</strong></summary>
 
 ### 4. sync Package ⭐ (USED)
 
@@ -3629,7 +3885,10 @@ func (c *Cache) Set(key string, value interface{}) {
 - Database handles concurrency with transactions
 - If we had shared cache, we'd need RWMutex
 
----
+</details>
+
+<details>
+<summary><strong>5. HTTP Serialization/Deserialization ⭐ (USED - API Service)</strong></summary>
 
 ### 5. HTTP Serialization/Deserialization ⭐ (USED - API Service)
 
@@ -3694,7 +3953,10 @@ json.NewDecoder(r.Body).Decode(&user)
 - Q: "How to handle time.Time?" → A: Marshals to RFC3339 by default, can customize with MarshalJSON
 - Q: "Case sensitivity?" → A: JSON keys are case-sensitive, Go uses exact match (case-insensitive fallback)
 
----
+</details>
+
+<details>
+<summary><strong>6. io Package (Reader, Writer, Stream Processing) ⚠️ (LIMITED USE)</strong></summary>
 
 ### 6. io Package (Reader, Writer, Stream Processing) ⚠️ (LIMITED USE)
 
@@ -3752,7 +4014,10 @@ io.Copy(os.Stdout, pr)
 - Q: "What is io.EOF?" → A: Sentinel error indicating end of stream
 - Q: "How to chain readers?" → A: Wrap them: `gzip.NewReader(file)` → `io.LimitReader(gzipReader, size)`
 
----
+</details>
+
+<details>
+<summary><strong>7. Generics (Type Parameters) ❌ (NOT USED)</strong></summary>
 
 ### 7. Generics (Type Parameters) ❌ (NOT USED)
 
@@ -3804,7 +4069,10 @@ activeChains := Filter(chains, func(c Chain) bool { return c.IsActive })
 - Q: "What is `any` constraint?" → A: Alias for `interface{}`, means "any type"
 - Q: "What is `comparable` constraint?" → A: Types that support == and != (used for map keys)
 
----
+</details>
+
+<details>
+<summary><strong>8. Testing with testify/require ❌ (NOT IMPLEMENTED)</strong></summary>
 
 ### 8. Testing with testify/require ❌ (NOT IMPLEMENTED)
 
@@ -3857,7 +4125,10 @@ func TestRateLimiter(t *testing.T) {
 - Q: "Table-driven tests?" → A: Loop over test cases slice (Go idiom)
 - Q: "Test coverage tools?" → A: `go test -cover`, `go tool cover -html=coverage.out`
 
----
+</details>
+
+<details>
+<summary><strong>9. Testcontainers ❌ (NOT IMPLEMENTED)</strong></summary>
 
 ### 9. Testcontainers ❌ (NOT IMPLEMENTED)
 
@@ -3914,7 +4185,10 @@ func TestWithPostgres(t *testing.T) {
 - Q: "Isn't it slow?" → A: Yes, but worth it for integration tests (run unit tests fast, integration slower)
 - Q: "When to use?" → A: Integration tests, CI/CD, database migration testing
 
----
+</details>
+
+<details>
+<summary><strong>10. Google Go Style Guide (Idiomatic Go) ⭐ (MOSTLY FOLLOWED)</strong></summary>
 
 ### 10. Google Go Style Guide (Idiomatic Go) ⭐ (MOSTLY FOLLOWED)
 
@@ -4003,6 +4277,8 @@ ingester := &Ingester{
 - Q: "What is 'accept interfaces, return structs'?" → A: Callers can pass anything implementing interface, you return concrete type
 - Q: "Why no exceptions?" → A: Explicit error handling, errors are values
 
+</details>
+
 ---
 
 ## Go Concepts Summary Table
@@ -4029,6 +4305,9 @@ This project demonstrates production-grade Go concurrency (goroutines, contexts,
 
 ## Troubleshooting Guide
 
+<details>
+<summary><strong>Issue: Ingester falling behind chain head</strong></summary>
+
 ### Issue: Ingester falling behind chain head
 
 **Symptoms**: `last_indexed_block` is 1000+ blocks behind current block
@@ -4048,6 +4327,11 @@ curl http://localhost:9090/metrics | grep rpc_request_duration
 3. Scale horizontally (multiple ingesters with block range sharding)
 4. Check network connectivity to RPC provider
 
+</details>
+
+<details>
+<summary><strong>Issue: Processor consumer lag</strong></summary>
+
 ### Issue: Processor consumer lag
 
 **Symptoms**: Kafka consumer lag increasing
@@ -4065,6 +4349,11 @@ kafka-consumer-groups --bootstrap-server localhost:9092 \
 3. Add database indexes for faster writes
 4. Scale processor horizontally (Kafka will rebalance)
 5. Check database connection pool settings
+
+</details>
+
+<details>
+<summary><strong>Issue: API slow response times</strong></summary>
 
 ### Issue: API slow response times
 
@@ -4089,9 +4378,14 @@ redis-cli INFO stats | grep hit_rate
 4. Use connection pooling
 5. Add read replicas for queries
 
+</details>
+
 ---
 
 ## Performance Optimization
+
+<details>
+<summary><strong>Database Optimizations</strong></summary>
 
 ### Database Optimizations
 
@@ -4117,6 +4411,11 @@ ALTER SYSTEM SET max_connections = 200;
 ALTER SYSTEM SET shared_buffers = '4GB';
 ALTER SYSTEM SET effective_cache_size = '12GB';
 ```
+
+</details>
+
+<details>
+<summary><strong>Go Performance Tips</strong></summary>
 
 ### Go Performance Tips
 
@@ -4144,6 +4443,11 @@ go func() {
 }()
 ```
 
+</details>
+
+<details>
+<summary><strong>Kafka Optimizations</strong></summary>
+
 ### Kafka Optimizations
 
 ```yaml
@@ -4158,6 +4462,8 @@ fetch.min.bytes: 50000  # Fetch at least 50KB
 fetch.max.wait.ms: 500  # Wait up to 500ms to accumulate data
 max.poll.records: 1000  # Process 1000 messages per poll
 ```
+
+</details>
 
 ---
 
@@ -4174,7 +4480,8 @@ Building frontends for blockchain applications requires different considerations
 - 🔍 **Data Visualization**: Charts, graphs, transaction flows
 - 🎨 **Consistent UX**: Dark mode standard, crypto-native design patterns
 
----
+<details>
+<summary><strong>Framework Comparison: React vs Next.js vs Vue</strong></summary>
 
 ### Framework Comparison: React vs Next.js vs Vue
 
@@ -5155,7 +5462,10 @@ npx shadcn-ui@latest add button
 {/each}
 ```
 
----
+</details>
+
+<details>
+<summary><strong>Alternative Frameworks: Solid.js & Vue 3</strong></summary>
 
 #### **Solid.js** 💠 **React-like, But Faster**
 
@@ -5216,7 +5526,10 @@ function Counter() {
 
 **Transferable Skills:** 75% - Concepts transfer, but syntax very different.
 
----
+</details>
+
+<details>
+<summary><strong>Decision Matrix & Stack Recommendations</strong></summary>
 
 ### Decision Matrix: Which Stack for Which Project?
 
@@ -5400,7 +5713,10 @@ Alternatives (Styled Components, CSS Modules) are slower and have runtime costs.
 
 **Bottom Line**: Master React + TypeScript + Tailwind + React Query + Zustand → You can build 90% of Web3 frontends and switch to any other framework in 1-3 weeks if needed.
 
----
+</details>
+
+<details>
+<summary><strong>Data Fetching & Web3 Integration</strong></summary>
 
 ### Data Fetching: TanStack Query (React Query)
 
@@ -5676,9 +5992,14 @@ This ensures users see new blocks within 1-2 seconds while handling WebSocket di
 
 For 10K items, virtual scrolling + pagination is the standard solution."
 
+</details>
+
 ---
 
 ## Production Readiness
+
+<details>
+<summary><strong>Deployment Checklist</strong></summary>
 
 ### Deployment Checklist
 
@@ -5698,6 +6019,11 @@ For 10K items, virtual scrolling + pagination is the standard solution."
 - [ ] On-call runbook created
 - [ ] Load testing completed
 - [ ] Security audit performed
+
+</details>
+
+<details>
+<summary><strong>Monitoring Alerts</strong></summary>
 
 ### Monitoring Alerts
 
@@ -5724,6 +6050,11 @@ alerts:
     severity: warning
 ```
 
+</details>
+
+<details>
+<summary><strong>Capacity Planning</strong></summary>
+
 ### Capacity Planning
 
 **Current Setup** (per chain):
@@ -5737,6 +6068,8 @@ alerts:
 - Horizontal: Add more ingester/processor/API instances
 - Vertical: Increase database resources first
 - Sharding: Partition database by chain_id when single DB hits limits
+
+</details>
 
 ---
 
