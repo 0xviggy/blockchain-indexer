@@ -455,9 +455,9 @@ func (ing *Ingester) processBlock(chain ChainConfig, blockNum int64) error {
 		return fmt.Errorf("failed to insert block: %w", err)
 	}
 
-	// Insert transactions
-	for _, ethTx := range block.Transactions() {
-		if err := ing.insertTransaction(tx, chain.ChainID, block, ethTx); err != nil {
+	// Insert transactions with receipts
+	for txIndex, ethTx := range block.Transactions() {
+		if err := ing.insertTransaction(tx, chain.ChainID, block, ethTx, uint(txIndex), client, ctx); err != nil {
 			return fmt.Errorf("failed to insert transaction %s: %w", ethTx.Hash().Hex(), err)
 		}
 	}
@@ -512,7 +512,7 @@ func (ing *Ingester) insertBlock(tx *sql.Tx, chainID int64, block *types.Block) 
 	return err
 }
 
-func (ing *Ingester) insertTransaction(tx *sql.Tx, chainID int64, block *types.Block, ethTx *types.Transaction) error {
+func (ing *Ingester) insertTransaction(tx *sql.Tx, chainID int64, block *types.Block, ethTx *types.Transaction, txIndex uint, client *ethclient.Client, ctx context.Context) error {
 	query := `
 		INSERT INTO transactions (
 			chain_id, tx_hash, block_number, tx_index, from_address, to_address,
@@ -532,14 +532,24 @@ func (ing *Ingester) insertTransaction(tx *sql.Tx, chainID int64, block *types.B
 		toAddr = ethTx.To().Hex()
 	}
 
-	// We don't have receipt yet, will update in a second pass if needed
-	// For now, insert with status=1 (assume success, update later if you fetch receipts)
+	// Fetch transaction receipt to get actual status and gas used
+	receipt, err := client.TransactionReceipt(ctx, ethTx.Hash())
+	if err != nil {
+		// Log warning but continue with unknown status
+		log.Printf("⚠️  Failed to get receipt for tx %s: %v (using status=1, gas_used=0)", ethTx.Hash().Hex(), err)
+		// Use defaults if receipt fetch fails
+		receipt = &types.Receipt{
+			Status:           1, // Assume success
+			GasUsed:          0,
+			TransactionIndex: txIndex,
+		}
+	}
 
 	_, err = tx.Exec(query,
 		chainID,
 		ethTx.Hash().Hex(),
 		block.Number().Int64(),
-		0, // TODO: get actual tx index
+		receipt.TransactionIndex,
 		from.Hex(),
 		toAddr,
 		ethTx.Value().String(),
@@ -547,8 +557,8 @@ func (ing *Ingester) insertTransaction(tx *sql.Tx, chainID int64, block *types.B
 		ethTx.GasPrice().String(),
 		ethTx.Data(),
 		ethTx.Nonce(),
-		1, // status - will need receipt to get actual status
-		0, // gas_used - will need receipt
+		receipt.Status,  // Actual status from receipt (0=fail, 1=success)
+		receipt.GasUsed, // Actual gas consumed
 	)
 
 	return err
