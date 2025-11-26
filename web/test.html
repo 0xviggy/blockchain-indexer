@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Test</title>
+</head>
+<body>
+    <h1>API Test</h1>
+    <div id="output"></div>
+    <script>
+        async function test() {
+            try {
+                console.log('Fetching chains...');
+                const chainsRes = await fetch('http://localhost:8000/api/v1/chains');
+                const chains = await chainsRes.json();
+                console.log('Chains:', chains);
+                
+                console.log('Fetching transactions...');
+                const txRes = await fetch('http://localhost:8000/api/v1/chains/1/transactions?limit=5');
+                const txs = await txRes.json();
+                console.log('Transactions:', txs);
+                
+                document.getElementById('output').innerHTML = `
+                    <h2>Chains: ${chains.length}</h2>
+                    <h2>Transactions: ${txs.length}</h2>
+                    <h3>First transaction:</h3>
+                    <pre>${JSON.stringify(txs[0], null, 2)}</pre>
+                `;
+            } catch (err) {
+                console.error('Error:', err);
+                document.getElementById('output').innerHTML = `<pre>Error: ${err.message}</pre>`;
+            }
+        }
+        test();
+    </script>
+</body>
+</html>

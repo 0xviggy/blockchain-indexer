@@ -17,9 +17,10 @@ help:
 	@echo "  make db-reset        - Reset database (WARNING: deletes all data)"
 	@echo ""
 	@echo "Development:"
-	@echo "  make run-ingester    - Start ingester service"
-	@echo "  make run-processor   - Start processor service"
-	@echo "  make run-api         - Start API service"
+	@echo "  make run-ingester    - Start ingester service (stops existing first)"
+	@echo "  make run-processor   - Start processor service (stops existing first)"
+	@echo "  make run-api         - Start API service (stops existing first)"
+	@echo "  make stop-services   - Stop all running services"
 	@echo "  make test            - Run all tests"
 	@echo "  make explore-rpc     - Explore RPC data and validate schemas"
 	@echo ""
@@ -56,6 +57,9 @@ logs:
 status:
 	@echo "📊 Service Status:"
 	@docker ps --filter "name=indexer-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+	@echo ""
+	@echo "Go Services:"
+	@ps aux | grep -E "services/(ingester|api|processor)" | grep -v grep | awk '{print $$2, $$11, $$12, $$13}' || echo "  No Go services running"
 
 wait-for-services:
 	@echo "⏳ Waiting for services to be ready..."
@@ -97,15 +101,30 @@ kafka-create-topics:
 	@echo "✅ Topics created"
 
 # Service commands
+stop-services:
+	@echo "🛑 Stopping all services..."
+	@pkill -f "go run main.go" || true
+	@pkill -f "services/ingester" || true
+	@pkill -f "services/api" || true
+	@pkill -f "services/processor" || true
+	@echo "✅ All services stopped"
+
 run-ingester:
+	@echo "🔍 Checking for existing ingester processes..."
+	@pkill -f "services/ingester.*go run" 2>/dev/null || true
+	@sleep 1
 	@if [ ! -d "services/ingester" ]; then echo "❌ Ingester service not yet created. Run setup first."; exit 1; fi
-	cd services/ingester && go run main.go
+	@if [ -f .env ]; then export $$(cat .env | grep -v '^#' | xargs) && cd services/ingester && go run main.go; else echo "⚠️  No .env file found. Copy .env.example to .env and configure your RPC URLs."; exit 1; fi
 
 run-processor:
+	@pkill -f "services/processor.*go run" 2>/dev/null || true
+	@sleep 1
 	@if [ ! -d "services/processor" ]; then echo "❌ Processor service not yet created. Run setup first."; exit 1; fi
 	cd services/processor && go run main.go
 
 run-api:
+	@pkill -f "services/api.*go run" 2>/dev/null || true
+	@sleep 1
 	@if [ ! -d "services/api" ]; then echo "❌ API service not yet created. Run setup first."; exit 1; fi
 	cd services/api && go run main.go
 

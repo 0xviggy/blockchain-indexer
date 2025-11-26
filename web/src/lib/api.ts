@@ -21,6 +21,17 @@ class ApiClient {
   async getHealth(): Promise<HealthResponse> {
     return this.fetch<HealthResponse>('/health')
   }
+  
+  // Ingester status
+  async getIngesterStatus(): Promise<{
+    running: boolean
+    last_block_time: string | null
+    last_block_number: number | null
+    blocks_behind: number | null
+    message: string
+  }> {
+    return this.fetch('/ingester/status')
+  }
 
   // Chains
   async getChains(): Promise<Chain[]> {
@@ -60,6 +71,65 @@ class ApiClient {
   async getAddressTransactions(address: string, limit = 20): Promise<Transaction[]> {
     return this.fetch<Transaction[]>(`/api/v1/addresses/${address}/transactions?limit=${limit}`)
   }
+
+  // Skipped Blocks
+  async getSkippedBlocks(chainId: number, limit = 100): Promise<SkippedBlock[]> {
+    return this.fetch<SkippedBlock[]>(`/api/v1/chains/${chainId}/skipped-blocks?limit=${limit}`)
+  }
+
+  async clearSkippedBlocks(chainId: number): Promise<{ success: boolean; rows_deleted: number }> {
+    const response = await fetch(`${this.baseUrl}/api/v1/chains/${chainId}/skipped-blocks`, {
+      method: 'DELETE',
+    })
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.statusText}`)
+    }
+    return response.json()
+  }
+
+  // Ingester Control
+  async getCheckpoint(chainId: number): Promise<Checkpoint> {
+    return this.fetch<Checkpoint>(`/api/v1/chains/${chainId}/checkpoint`)
+  }
+
+  async updateCheckpoint(chainId: number, blockNumber: number): Promise<{ success: boolean }> {
+    const response = await fetch(`${this.baseUrl}/api/v1/chains/${chainId}/checkpoint`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ block_number: blockNumber }),
+    })
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.statusText}`)
+    }
+    return response.json()
+  }
+
+  // Events (for Task 2 verification)
+  async getEvents(chainId: number, limit = 20): Promise<any[]> {
+    try {
+      return this.fetch<any[]>(`/api/v1/chains/${chainId}/events?limit=${limit}`)
+    } catch (err) {
+      // Events endpoint might not exist yet
+      return []
+    }
+  }
+}
+
+export interface SkippedBlock {
+  chain_id: number
+  block_number: number
+  skip_reason: string
+  error_message: string
+  skipped_at: string
+  retry_count: number
+  last_retry_at?: string
+}
+
+export interface Checkpoint {
+  chain_id: number
+  service_name: string
+  last_processed_block: number
+  updated_at: string
 }
 
 export const api = new ApiClient(API_BASE_URL)

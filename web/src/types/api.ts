@@ -1,10 +1,12 @@
 export interface Chain {
-  id: number
+  chain_id: number
   name: string
-  rpc_url: string
-  last_block: number
-  block_count: number
-  tx_count: number
+  is_active: boolean
+  last_block: number | null
+  block_count: number | null
+  tx_count: number | null
+  created_at: string
+  updated_at: string
 }
 
 export interface Block {
@@ -22,18 +24,19 @@ export interface Block {
 
 export interface Transaction {
   chain_id: number
-  hash: string
+  tx_hash: string
   block_number: number
   tx_index: number
   from_address: string
   to_address: string | null
   value: string
-  gas: string
-  gas_price: string | null
-  max_fee_per_gas: string | null
-  max_priority_fee_per_gas: string | null
-  input_data: string
+  gas_limit: number
+  gas_price: string
+  input_data?: string
   nonce: number
+  status: number
+  gas_used: number
+  created_at: string
 }
 
 export interface ChainStats {
@@ -41,6 +44,20 @@ export interface ChainStats {
   total_transactions: number
   avg_block_time: number
   avg_tx_per_block: number
+}
+
+export interface Event {
+  chain_id: number
+  transaction_hash: string
+  log_index: number
+  contract_address: string
+  event_signature: string
+  protocol: string
+  topic1: string | null
+  topic2: string | null
+  topic3: string | null
+  data: string
+  block_number: number
 }
 
 export interface HealthResponse {

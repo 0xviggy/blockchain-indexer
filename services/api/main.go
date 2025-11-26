@@ -162,6 +162,9 @@ func (api *API) setupRoutes() {
 
 	// Health check
 	api.router.GET("/health", api.handleHealth)
+	
+	// Ingester status
+	api.router.GET("/ingester/status", api.handleIngesterStatus)
 
 	// API documentation
 	api.router.GET("/docs", api.handleDocs)
@@ -183,8 +186,16 @@ func (api *API) setupRoutes() {
 		v1.GET("/chains/:chain_id/transactions/:tx_hash", api.handleGetTransaction)
 		v1.GET("/chains/:chain_id/blocks/:block_number/transactions", api.handleGetBlockTransactions)
 
-		// Address
+		// Addresses
 		v1.GET("/chains/:chain_id/addresses/:address/transactions", api.handleGetAddressTransactions)
+		
+		// Skipped blocks
+		v1.GET("/chains/:chain_id/skipped-blocks", api.handleGetSkippedBlocks)
+		
+		// Ingester control
+		v1.GET("/chains/:chain_id/checkpoint", api.handleGetCheckpoint)
+		v1.POST("/chains/:chain_id/checkpoint", api.handleUpdateCheckpoint)
+		v1.DELETE("/chains/:chain_id/skipped-blocks", api.handleClearSkippedBlocks)
 	}
 }
 
@@ -228,6 +239,61 @@ func (api *API) handleHealth(c *gin.Context) {
 		Timestamp: time.Now(),
 		Database:  dbStatus,
 		Chains:    chains,
+	})
+}
+
+type IngesterStatusResponse struct {
+	Running         bool      `json:"running"`
+	LastBlockTime   *time.Time `json:"last_block_time"`
+	LastBlockNumber *int64    `json:"last_block_number"`
+	BlocksBehind    *int64    `json:"blocks_behind"`
+	Message         string    `json:"message"`
+}
+
+func (api *API) handleIngesterStatus(c *gin.Context) {
+	// Check if ingester is actively ingesting by looking at recent block timestamps
+	var lastBlockTime *time.Time
+	var lastBlockNumber *int64
+	
+	err := api.db.QueryRow(`
+		SELECT MAX(block_number), MAX(created_at)
+		FROM transactions
+		WHERE chain_id = 1
+	`).Scan(&lastBlockNumber, &lastBlockTime)
+	
+	if err != nil || lastBlockTime == nil {
+		c.JSON(http.StatusOK, IngesterStatusResponse{
+			Running: false,
+			Message: "No blocks indexed yet",
+		})
+		return
+	}
+	
+	// Consider ingester "running" if last block was indexed within 60 seconds
+	timeSinceLastBlock := time.Since(*lastBlockTime)
+	isRunning := timeSinceLastBlock < 60*time.Second
+	
+	// Calculate blocks behind (rough estimate: 12s per block on Ethereum)
+	blocksBehind := int64(timeSinceLastBlock.Seconds() / 12)
+	if blocksBehind < 0 {
+		blocksBehind = 0
+	}
+	
+	message := ""
+	if isRunning {
+		message = "Ingester is actively processing blocks"
+	} else if timeSinceLastBlock < 5*time.Minute {
+		message = "Ingester may be paused or rate limited"
+	} else {
+		message = "Ingester appears to be stopped"
+	}
+	
+	c.JSON(http.StatusOK, IngesterStatusResponse{
+		Running:         isRunning,
+		LastBlockTime:   lastBlockTime,
+		LastBlockNumber: lastBlockNumber,
+		BlocksBehind:    &blocksBehind,
+		Message:         message,
 	})
 }
 
@@ -548,7 +614,7 @@ func (api *API) handleGetTransactions(c *gin.Context) {
 
 	limit := 20
 	if l := c.Query("limit"); l != "" {
-		if parsedLimit, err := strconv.Atoi(l); err == nil && parsedLimit > 0 && parsedLimit <= 100 {
+		if parsedLimit, err := strconv.Atoi(l); err == nil && parsedLimit > 0 && parsedLimit <= 1000 {
 			limit = parsedLimit
 		}
 	}
@@ -712,4 +778,170 @@ func (api *API) handleGetAddressTransactions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, transactions)
+}
+
+// ============================================================================
+// Skipped Block Handlers
+// ============================================================================
+
+type SkippedBlock struct {
+	ChainID       int64     `json:"chain_id"`
+	BlockNumber   int64     `json:"block_number"`
+	SkipReason    string    `json:"skip_reason"`
+	ErrorMessage  string    `json:"error_message"`
+	SkippedAt     time.Time `json:"skipped_at"`
+	RetryCount    int       `json:"retry_count"`
+	LastRetryAt   *time.Time `json:"last_retry_at,omitempty"`
+}
+
+func (api *API) handleGetSkippedBlocks(c *gin.Context) {
+	chainID, err := strconv.ParseInt(c.Param("chain_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid chain ID"})
+		return
+	}
+
+	limit := 100
+	if l := c.Query("limit"); l != "" {
+		if parsedLimit, err := strconv.Atoi(l); err == nil && parsedLimit > 0 && parsedLimit <= 1000 {
+			limit = parsedLimit
+		}
+	}
+
+	rows, err := api.db.Query(`
+		SELECT chain_id, block_number, skip_reason, error_message, skipped_at, retry_count, last_retry_at
+		FROM skipped_blocks
+		WHERE chain_id = $1
+		ORDER BY block_number DESC
+		LIMIT $2
+	`, chainID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error", "message": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	skippedBlocks := []SkippedBlock{}
+	for rows.Next() {
+		var sb SkippedBlock
+		err := rows.Scan(
+			&sb.ChainID, &sb.BlockNumber, &sb.SkipReason, &sb.ErrorMessage,
+			&sb.SkippedAt, &sb.RetryCount, &sb.LastRetryAt,
+		)
+		if err != nil {
+			log.Printf("Error scanning skipped block: %v", err)
+			continue
+		}
+		skippedBlocks = append(skippedBlocks, sb)
+	}
+
+	c.JSON(http.StatusOK, skippedBlocks)
+}
+
+// ============================================================================
+// Ingester Control Handlers
+// ============================================================================
+
+type CheckpointResponse struct {
+	ChainID            int64     `json:"chain_id"`
+	ServiceName        string    `json:"service_name"`
+	LastProcessedBlock int64     `json:"last_processed_block"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+func (api *API) handleGetCheckpoint(c *gin.Context) {
+	chainID, err := strconv.ParseInt(c.Param("chain_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid chain ID"})
+		return
+	}
+
+	var checkpoint CheckpointResponse
+	err = api.db.QueryRow(`
+		SELECT chain_id, service_name, last_processed_block, updated_at
+		FROM checkpoints
+		WHERE chain_id = $1 AND service_name = 'ingester'
+	`, chainID).Scan(
+		&checkpoint.ChainID, &checkpoint.ServiceName,
+		&checkpoint.LastProcessedBlock, &checkpoint.UpdatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Checkpoint not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error", "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, checkpoint)
+}
+
+type UpdateCheckpointRequest struct {
+	BlockNumber int64 `json:"block_number" binding:"required,min=0"`
+}
+
+func (api *API) handleUpdateCheckpoint(c *gin.Context) {
+	chainID, err := strconv.ParseInt(c.Param("chain_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid chain ID"})
+		return
+	}
+
+	var req UpdateCheckpointRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request", "message": err.Error()})
+		return
+	}
+
+	// Update or insert checkpoint
+	result, err := api.db.Exec(`
+		INSERT INTO checkpoints (chain_id, service_name, last_processed_block, updated_at)
+		VALUES ($1, 'ingester', $2, NOW())
+		ON CONFLICT (chain_id, service_name)
+		DO UPDATE SET last_processed_block = $2, updated_at = NOW()
+	`, chainID, req.BlockNumber)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update checkpoint", "message": err.Error()})
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	log.Printf("Updated checkpoint for chain %d to block %d (rows affected: %d)", chainID, req.BlockNumber, rowsAffected)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":     true,
+		"chain_id":    chainID,
+		"block_number": req.BlockNumber,
+		"message":     "Checkpoint updated successfully",
+	})
+}
+
+func (api *API) handleClearSkippedBlocks(c *gin.Context) {
+	chainID, err := strconv.ParseInt(c.Param("chain_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid chain ID"})
+		return
+	}
+
+	result, err := api.db.Exec(`
+		DELETE FROM skipped_blocks WHERE chain_id = $1
+	`, chainID)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear skipped blocks", "message": err.Error()})
+		return
+	}
+
+	rowsDeleted, _ := result.RowsAffected()
+	log.Printf("Cleared %d skipped blocks for chain %d", rowsDeleted, chainID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":      true,
+		"chain_id":     chainID,
+		"rows_deleted": rowsDeleted,
+		"message":      "Skipped blocks cleared successfully",
+	})
 }

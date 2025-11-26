@@ -39,11 +39,12 @@ CREATE TABLE blocks (
     block_hash VARCHAR(66) NOT NULL,
     parent_hash VARCHAR(66) NOT NULL,
     timestamp TIMESTAMP NOT NULL,
-    miner VARCHAR(42),
     gas_used BIGINT,
     gas_limit BIGINT,
+    base_fee_per_gas NUMERIC(78, 0), -- EIP-1559 base fee (wei)
     transaction_count INT DEFAULT 0,
     created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
     PRIMARY KEY (chain_id, block_number),
     FOREIGN KEY (chain_id) REFERENCES chains(chain_id)
 ) PARTITION BY LIST (chain_id);
@@ -83,10 +84,12 @@ CREATE TABLE transactions (
     from_address VARCHAR(42) NOT NULL,
     to_address VARCHAR(42),
     value NUMERIC(78, 0), -- Support up to 2^256
+    gas_limit BIGINT, -- Gas limit set by sender (from tx.Gas())
     gas_price BIGINT,
-    gas_used BIGINT,
-    input BYTEA,
-    status BOOLEAN,
+    gas_used BIGINT, -- Actual gas consumed (from receipt.GasUsed)
+    input_data BYTEA,
+    nonce BIGINT, -- Transaction nonce (from tx.Nonce())
+    status INTEGER DEFAULT 1, -- 0=failed, 1=success (from receipt.Status)
     created_at TIMESTAMP DEFAULT NOW(),
     PRIMARY KEY (chain_id, tx_hash),
     FOREIGN KEY (chain_id, block_number) REFERENCES blocks(chain_id, block_number) ON DELETE CASCADE

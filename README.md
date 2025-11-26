@@ -82,6 +82,48 @@ cd web && npm run dev
 # Visit: http://localhost:5173 (frontend) or http://localhost:8000/health (API)
 ```
 
+## Development Workflow
+
+### Managing Services
+
+```bash
+# Check what's running
+make status
+
+# Stop all services cleanly
+make stop-services
+
+# Start services (auto-stops duplicates first)
+make run-api        # Terminal 1
+make run-ingester   # Terminal 2
+cd web && npm run dev   # Terminal 3
+```
+
+**Note**: Each `make run-*` command automatically stops existing instances before starting to prevent duplicate processes.
+
+### Ingester Control
+
+Use the **⚙️ Ingester Control** tab in the UI (http://localhost:5173) to:
+- View current checkpoint and ingester status
+- Reset checkpoint to reprocess historical blocks
+- Clear skipped blocks (e.g., blocks that failed due to RPC errors)
+- Test specific block ranges (e.g., block 23,883,999 for blob transaction testing)
+
+After changing the checkpoint, restart the ingester: `make run-ingester`
+
+### Common Issues
+
+**Duplicate processes running?**
+```bash
+make stop-services  # Stops all Go services
+make status         # Verify everything stopped
+```
+
+**Port already in use?**
+```bash
+lsof -ti:8000 | xargs kill -9  # Kill process on port 8000
+```
+
 ## License
 
 MIT

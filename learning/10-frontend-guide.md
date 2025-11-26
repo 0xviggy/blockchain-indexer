@@ -553,8 +553,295 @@ Deployment: Vercel Edge
 
 ---
 
+## Common React Pitfalls & Anti-Patterns
+
+### Pitfall 1: State in Function Default Parameters (Stale Closures)
+
+**Problem**: Using React state values in default function parameters creates stale closures that don't update when state changes.
+
+```tsx
+// ❌ ANTI-PATTERN: State in default parameter
+const [limit, setLimit] = useState(500)
+
+const loadData = async (id: number, limit = limit) => {
+    // Problem: 'limit' captures the value at function definition time
+    const data = await api.getData(id, limit)
+    setData(data)
+}
+
+// User changes limit to 1000
+setLimit(1000)  // State updates
+
+// Later, auto-refresh calls loadData without limit parameter
+useEffect(() => {
+    setInterval(() => {
+        loadData(selectedId)  // Uses OLD limit value (500)!
+    }, 5000)
+}, [selectedId])  // limit not in dependencies
+
+// Result: Limit glitches back to 500 every 5 seconds
+```
+
+**Why This Happens**:
+1. Function with default parameters is created: `limit = 500` (captured at mount)
+2. User changes state: `setLimit(1000)`
+3. Component re-renders, function re-defined with new default: `limit = 1000`
+4. BUT useEffect has closure over OLD function definition
+5. Auto-refresh uses old function with old default value
+
+**Solution 1: Remove Default Parameters**
+```tsx
+// ✅ GOOD: Required parameter
+const [limit, setLimit] = useState(500)
+
+const loadData = async (id: number, limit: number) => {
+    // limit is required - no stale closure possible
+    const data = await api.getData(id, limit)
+    setData(data)
+}
+
+// All call sites must pass limit explicitly
+loadData(selectedId, limit)  // Always uses current state
+
+useEffect(() => {
+    setInterval(() => {
+        loadData(selectedId, limit)  // Explicit limit
+    }, 5000)
+}, [selectedId, limit])  // Include limit in dependencies
+```
+
+**Solution 2: Use Refs for Latest Value**
+```tsx
+// ✅ ALTERNATIVE: useRef for always-current value
+const [limit, setLimit] = useState(500)
+const limitRef = useRef(limit)
+
+useEffect(() => {
+    limitRef.current = limit  // Keep ref in sync
+}, [limit])
+
+const loadData = async (id: number, limit = limitRef.current) => {
+    const data = await api.getData(id, limit)
+    setData(data)
+}
+
+// Auto-refresh always uses current limit
+useEffect(() => {
+    setInterval(() => {
+        loadData(selectedId)  // Uses limitRef.current (always latest)
+    }, 5000)
+}, [selectedId])
+```
+
+**Solution 3: useCallback with Dependencies**
+```tsx
+// ✅ ALTERNATIVE: useCallback for stable reference
+const [limit, setLimit] = useState(500)
+
+const loadData = useCallback(async (id: number) => {
+    // Closure over current 'limit' value
+    const data = await api.getData(id, limit)
+    setData(data)
+}, [limit])  // Re-create when limit changes
+
+useEffect(() => {
+    setInterval(() => {
+        loadData(selectedId)  // Uses latest loadData closure
+    }, 5000)
+}, [selectedId, loadData])  // loadData updates when limit changes
+```
+
+**Real-World Example from Blockchain Indexer**:
+```tsx
+// ❌ BUG: Transaction limit dropdown glitches back to 500
+const [txLimit, setTxLimit] = useState(500)
+
+const loadTransactions = async (chainId: number, limit = txLimit) => {
+    const data = await api.getTransactions(chainId, limit)
+    setTransactions(data)
+}
+
+// Auto-refresh uses stale default
+useEffect(() => {
+    const interval = setInterval(() => {
+        loadTransactions(selectedChain)  // Uses old default!
+    }, 5000)
+    return () => clearInterval(interval)
+}, [selectedChain])  // Missing: txLimit dependency
+
+// ✅ FIX: Explicit parameter
+const loadTransactions = async (chainId: number, limit: number) => {
+    const data = await api.getTransactions(chainId, limit)
+    setTransactions(data)
+}
+
+useEffect(() => {
+    const interval = setInterval(() => {
+        loadTransactions(selectedChain, txLimit)  // Explicit!
+    }, 5000)
+    return () => clearInterval(interval)
+}, [selectedChain, txLimit])  // Complete dependencies
+```
+
+**Key Lessons**:
+1. **Avoid default parameters with React state** - They create stale closures
+2. **Be explicit with function parameters** - Required params are clearer than defaults
+3. **useEffect dependencies matter** - Include ALL values used inside
+4. **ESLint exhaustive-deps rule** - Enable `react-hooks/exhaustive-deps` to catch this
+5. **Test auto-refresh scenarios** - Manual clicks may work, intervals expose bugs
+
+### Pitfall 2: Missing Dependencies in useEffect
+
+```tsx
+// ❌ BAD: count used but not in dependencies
+const [count, setCount] = useState(0)
+
+useEffect(() => {
+    console.log(count)  // Uses count
+}, [])  // Missing dependency!
+
+// ✅ GOOD: Include all dependencies
+useEffect(() => {
+    console.log(count)
+}, [count])
+```
+
+### Pitfall 3: Infinite Loops from Object/Array Dependencies
+
+```tsx
+// ❌ BAD: New array created every render
+const [data, setData] = useState([])
+
+useEffect(() => {
+    fetchData()
+}, [data])  // data is new array every time → infinite loop!
+
+// ✅ GOOD: Use primitive value
+useEffect(() => {
+    fetchData()
+}, [data.length])  // Or use React Query
+```
+
+### Pitfall 4: Forgetting to Cleanup Effects
+
+```tsx
+// ❌ BAD: Interval keeps running after unmount
+useEffect(() => {
+    setInterval(() => {
+        fetchData()
+    }, 5000)
+}, [])
+
+// ✅ GOOD: Return cleanup function
+useEffect(() => {
+    const interval = setInterval(() => {
+        fetchData()
+    }, 5000)
+    return () => clearInterval(interval)  // Cleanup!
+}, [])
+```
+
+### Pitfall 5: Not Using useCallback for Event Handlers
+
+```tsx
+// ❌ BAD: New function every render, child re-renders unnecessarily
+function Parent() {
+    const [count, setCount] = useState(0)
+    
+    const handleClick = () => {  // New function every render
+        console.log('clicked')
+    }
+    
+    return <ExpensiveChild onClick={handleClick} />
+}
+
+// ✅ GOOD: Stable function reference
+function Parent() {
+    const [count, setCount] = useState(0)
+    
+    const handleClick = useCallback(() => {
+        console.log('clicked')
+    }, [])  // Function never changes
+    
+    return <ExpensiveChild onClick={handleClick} />
+}
+```
+
+### Pitfall 6: Derived State (When Not Needed)
+
+```tsx
+// ❌ BAD: Storing derived state separately
+const [items, setItems] = useState([])
+const [itemCount, setItemCount] = useState(0)  // Derived!
+
+useEffect(() => {
+    setItemCount(items.length)  // Sync required
+}, [items])
+
+// ✅ GOOD: Calculate during render
+const [items, setItems] = useState([])
+const itemCount = items.length  // No sync needed
+```
+
+### Pitfall 7: Not Using React Query for Server State
+
+```tsx
+// ❌ BAD: Manual state management for API data
+const [data, setData] = useState(null)
+const [loading, setLoading] = useState(true)
+const [error, setError] = useState(null)
+
+useEffect(() => {
+    setLoading(true)
+    fetch('/api/data')
+        .then(res => res.json())
+        .then(data => {
+            setData(data)
+            setLoading(false)
+        })
+        .catch(err => {
+            setError(err)
+            setLoading(false)
+        })
+}, [])
+
+// ✅ GOOD: React Query handles it all
+import { useQuery } from '@tanstack/react-query'
+
+const { data, isLoading, error } = useQuery({
+    queryKey: ['data'],
+    queryFn: () => fetch('/api/data').then(res => res.json())
+})
+```
+
+**Common React Patterns Summary**:
+
+| Pattern | Bad Approach | Good Approach |
+|---------|-------------|---------------|
+| State in defaults | `func(x = stateVal)` | `func(x: Type)` + pass explicitly |
+| Dependencies | Omit variables | Include all used values |
+| Arrays/objects in deps | `[obj]` | `[obj.id]` or useMemo |
+| Effect cleanup | No return | `return () => cleanup()` |
+| Event handlers | Inline functions | useCallback |
+| Derived state | Separate useState | Calculate in render |
+| API data | Manual fetch | React Query/SWR |
+
+**ESLint Rules to Enable**:
+```json
+{
+  "rules": {
+    "react-hooks/rules-of-hooks": "error",
+    "react-hooks/exhaustive-deps": "warn",
+    "react/jsx-no-bind": "warn"
+  }
+}
+```
+
+---
+
 ## Related Documentation
 
 - [Technology Stack](./01-technology-stack.md)
 - [Interview Preparation](./07-interview-prep.md)
 - [Cross-Stack Learning](./11-cross-stack-production.md)
+- [Troubleshooting Guide](./09-troubleshooting.md)

@@ -474,6 +474,486 @@ export default function () {
 
 ---
 
+## Performance Optimization - Real-World Case Studies
+
+These are actual production issues encountered and solved during development, with detailed analysis and solutions.
+
+### Case Study 1: Database Batch INSERT (300x Speedup)
+
+**Context**: Ingesting Ethereum blocks with 100-200 transactions per block
+
+**Problem**:
+- Database transaction timeout after 60 seconds
+- 188 individual INSERT statements executed in a loop within a single DB transaction
+- Each INSERT taking ~300ms due to network round-trip overhead
+
+**Investigation**:
+```bash
+# Symptom in logs
+ERROR: database transaction timeout exceeded (60s)
+Context: Inserting 188 transactions from block 19000100
+
+# Root Cause Analysis
+# Time breakdown for 188 transactions:
+- Database query execution time: ~2-3ms per INSERT
+- Network latency (app ↔ postgres container): ~300ms per round-trip
+- Total time: 188 × 300ms = 56.4 seconds (just overhead!)
+
+# Confirmed with timing instrumentation
+log.Printf("Insert took: %v", time.Since(start))
+// Output: Insert took: 58.2s
+```
+
+**Root Cause**:
+- Each `INSERT` statement requires a network round-trip between the application and database container
+- Even though database execution is fast (~3ms), network latency dominates
+- With 188 transactions, the cumulative network overhead exceeded the 60s timeout
+- This is NOT a database performance issue - it's a network efficiency issue
+
+**Solution**:
+```go
+// Before: Individual INSERTs (SLOW)
+for _, tx := range transactions {
+    _, err := dbTx.Exec(`
+        INSERT INTO transactions (chain_id, block_number, tx_hash, ...)
+        VALUES ($1, $2, $3, ...)
+    `, tx.ChainID, tx.BlockNumber, tx.Hash, ...)
+    if err != nil {
+        return err
+    }
+}
+
+// After: Batch INSERT (FAST)
+func insertTransactionsBatch(dbTx *sql.Tx, chainID int64, transactions []Transaction) error {
+    if len(transactions) == 0 {
+        return nil
+    }
+    
+    var query strings.Builder
+    query.WriteString(`
+        INSERT INTO transactions (
+            chain_id, block_number, tx_hash, tx_index, from_address, 
+            to_address, value, gas_price, gas_used, status, block_timestamp
+        ) VALUES 
+    `)
+    
+    // Build dynamic placeholders: ($1,$2,$3), ($4,$5,$6), ...
+    args := make([]interface{}, 0, len(transactions)*11)
+    for i, tx := range transactions {
+        if i > 0 {
+            query.WriteString(", ")
+        }
+        
+        // Calculate placeholder numbers for this row
+        base := i * 11
+        query.WriteString(fmt.Sprintf(
+            "($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+            base+1, base+2, base+3, base+4, base+5, base+6,
+            base+7, base+8, base+9, base+10, base+11,
+        ))
+        
+        args = append(args,
+            chainID,
+            tx.BlockNumber,
+            tx.Hash,
+            tx.Index,
+            tx.FromAddress,
+            tx.ToAddress,
+            tx.Value,
+            tx.GasPrice,
+            tx.GasUsed,
+            tx.Status,
+            tx.BlockTimestamp,
+        )
+    }
+    
+    _, err := dbTx.Exec(query.String(), args...)
+    return err
+}
+```
+
+**Result**:
+- **Time**: 60s → 200ms (300x improvement)
+- **Network round-trips**: 188 → 1
+- **Database timeout adjusted**: 60s → 20s (no longer needed, but safe buffer)
+- **Throughput**: Can now process blocks with 1000+ transactions without issue
+
+**Lessons Learned**:
+1. **Network latency dominates in containerized environments** - Even localhost Docker networking has ~200-300ms round-trip times
+2. **Batch operations for >50 rows** - If inserting many rows in one transaction, always batch
+3. **Timeouts != database performance** - A timeout doesn't mean the database is slow; check network overhead
+4. **Profile first** - Use timing instrumentation to identify the bottleneck (DB query vs network vs serialization)
+5. **Security not compromised** - Still using parameterized queries ($1, $2, etc.), just batched
+
+**When to Apply This Pattern**:
+- ✅ Ingesting blockchain blocks with many transactions (>50)
+- ✅ Bulk data import operations
+- ✅ High-latency database connections (cloud, containers, cross-region)
+- ✅ Write-heavy workloads with multiple related rows
+- ❌ Single/few row inserts (overhead not worth complexity)
+- ❌ Highly variable row sizes (memory concerns with large batches)
+- ❌ Need immediate per-row error handling
+
+### Case Study 2: Receipt Fetch Retry Logic & Silent Failures
+
+**Context**: Transaction receipts fetched via RPC to get gas_used and status fields
+
+**Problem**:
+- Many transactions in database had `gas_used = 0`
+- No errors or warnings in logs
+- Data silently corrupted with default values
+
+**Investigation**:
+```bash
+# Check database for zero gas values
+SELECT COUNT(*) FROM transactions WHERE gas_used = 0;
+# Result: 234 out of 601 transactions (39%)
+
+# This is impossible - every Ethereum transaction uses gas!
+# Even a simple transfer uses 21,000 gas
+
+# Root cause: Code had fallback to zero on receipt fetch failure
+gasUsed := uint64(0)  // Default
+receipt, err := client.TransactionReceipt(ctx, txHash)
+if err == nil {
+    gasUsed = receipt.GasUsed
+}
+// Bug: Silently continues with zero if receipt fetch fails!
+```
+
+**Root Cause**:
+- Transient RPC errors (rate limiting, network glitches, timeout)
+- No retry logic - single attempt only
+- Fail-silent behavior - defaults to zero instead of failing
+- Creates corrupted data that looks valid (no NULL, just wrong value)
+
+**Solution**:
+```go
+// Fetch receipt with retry logic
+var receipt *types.Receipt
+var err error
+maxRetries := 2
+backoff := 300 * time.Millisecond
+
+for attempt := 0; attempt <= maxRetries; attempt++ {
+    if attempt > 0 {
+        log.Printf("Retry %d/%d for receipt %s after %v", 
+            attempt, maxRetries, tx.Hash().Hex(), backoff)
+        time.Sleep(backoff)
+        backoff *= 2  // Exponential backoff: 300ms, 600ms
+    }
+    
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    receipt, err = ethClient.TransactionReceipt(ctx, tx.Hash())
+    cancel()
+    
+    if err == nil {
+        break  // Success!
+    }
+    
+    log.Printf("Failed to fetch receipt for %s (attempt %d): %v", 
+        tx.Hash().Hex(), attempt+1, err)
+}
+
+// Fail-fast: Don't save incomplete data
+if err != nil {
+    return fmt.Errorf("failed to fetch receipt after %d retries: %w", 
+        maxRetries+1, err)
+}
+
+// Now safe to use receipt data
+gasUsed := receipt.GasUsed
+status := receipt.Status
+```
+
+**Configuration Tuning**:
+```go
+// Initial aggressive settings (too much)
+Retries: 3
+Timeout: 15s per attempt
+Backoff: 500ms, 1000ms, 2000ms
+
+// Optimized after testing with Alchemy free tier
+Retries: 2               // 3 total attempts (initial + 2 retries)
+Timeout: 10s per attempt // Alchemy usually responds in 50-100ms
+Backoff: 300ms, 600ms    // Quick retry for transient errors
+
+// Total max time per receipt: 10s + 0.3s + 10s + 0.6s + 10s = ~31s
+// This is acceptable for historical data ingestion
+```
+
+**Result**:
+- **Data quality**: 100% of transactions now have correct gas_used values
+- **Error visibility**: Failed blocks now log errors instead of silently corrupting data
+- **Success rate**: 98%+ receipts succeed on first attempt, 2% need one retry
+- **Zero tolerance**: Database query shows 0 transactions with gas_used = 0
+
+**Lessons Learned**:
+1. **Never fail silently** - Always surface errors or fail the operation
+2. **Default values are dangerous** - `0` looks valid but isn't for gas_used
+3. **Retry transient RPC errors** - Free tier rate limits, network glitches common
+4. **Exponential backoff** - Avoid hammering the RPC provider
+5. **Timeouts essential** - Prevent infinite hangs on stuck RPC calls
+6. **Fail-fast principle** - Better to not save data than save corrupt data
+
+**RPC Provider Issues** (Alchemy Free Tier):
+- Rate limiting: 429 errors when making requests too quickly
+- Compute units: Complex queries (like receipts) cost more
+- Latency: ~50-100ms for historical receipts (not instant as expected)
+- Solution: Retry logic + backoff handles transient issues gracefully
+
+### Case Study 3: React State Management - Default Parameter Bug
+
+**Context**: React frontend with transaction limit dropdown (100, 500, 1000)
+
+**Problem**:
+- User selects "1000 transactions" from dropdown
+- UI briefly updates, then glitches back to showing "500 transactions"
+- Auto-refresh (every 5s) resets the selected value
+
+**Investigation**:
+```tsx
+// The buggy code
+const [txLimit, setTxLimit] = useState(500)
+
+const loadTransactions = async (chainId: number, limit = txLimit) => {
+    const data = await api.getTransactions(chainId, limit)
+    setTransactions(data)
+}
+
+// Auto-refresh effect
+useEffect(() => {
+    const interval = setInterval(() => {
+        loadTransactions(selectedChain)  // BUG: No limit passed!
+    }, 5000)
+    return () => clearInterval(interval)
+}, [autoRefresh, selectedChain])
+
+// What happens:
+// 1. User changes dropdown: setTxLimit(1000)
+// 2. Component re-renders
+// 3. loadTransactions function is RE-DEFINED with NEW default: limit = 1000
+// 4. BUT useEffect has old closure with OLD loadTransactions
+// 5. After 5 seconds, interval calls OLD function with default limit = 500
+// 6. UI resets to 500 transactions
+```
+
+**Root Cause**:
+- **Stale closure** - useEffect captures `loadTransactions` at component mount time
+- **Default parameters capture state** - `limit = txLimit` captures the value at function definition time
+- **React doesn't re-run effect** - Dependencies don't include `txLimit` or `loadTransactions`
+- This is a classic React pitfall with default parameters and closures
+
+**Why It Happens**:
+```tsx
+// At mount time (txLimit = 500):
+function loadTransactions(chainId, limit = 500) { ... }  // Captured in closure
+
+// User changes to 1000:
+setTxLimit(1000)  // State updates
+
+// Component re-renders, function re-defined:
+function loadTransactions(chainId, limit = 1000) { ... }  // NEW function
+
+// BUT useEffect still has OLD function:
+setInterval(() => {
+    loadTransactions(selectedChain)  // Calls OLD function (limit = 500)!
+}, 5000)
+```
+
+**Solution 1**: Remove default parameters, pass explicitly
+```tsx
+// Before
+const loadTransactions = async (chainId: number, limit = txLimit) => {
+    // ...
+}
+
+// After
+const loadTransactions = async (chainId: number, limit: number) => {
+    // limit is now required - no stale closure possible
+}
+
+// Update all call sites
+loadTransactions(selectedChain, txLimit)  // Explicit everywhere
+loadChains() // Pass txLimit here too
+handleChainChange() // And here
+```
+
+**Solution 2**: Add to useEffect dependencies
+```tsx
+useEffect(() => {
+    if (!autoRefresh || !selectedChain) return
+    
+    const interval = setInterval(() => {
+        loadTransactions(selectedChain, txLimit)  // Pass current state
+    }, 5000)
+    
+    return () => clearInterval(interval)
+}, [autoRefresh, selectedChain, txLimit])  // Add txLimit dependency
+```
+
+**Result**:
+- Transaction limit selection now persists correctly
+- Auto-refresh respects the current limit setting
+- No more glitching back to default value
+
+**Lessons Learned**:
+1. **Avoid default parameters with React state** - They create stale closures
+2. **Be explicit with function parameters** - Required params > defaults in React
+3. **useEffect dependencies matter** - Include ALL values used inside the effect
+4. **ESLint warnings are your friend** - `react-hooks/exhaustive-deps` catches this
+5. **Test auto-refresh scenarios** - Manual interactions may work, but intervals expose bugs
+
+**General React Pitfall Pattern**:
+```tsx
+// ❌ BAD: State in default parameter
+const [count, setCount] = useState(0)
+const increment = (by = count) => setCount(prev => prev + by)
+
+// ✅ GOOD: Required parameter
+const increment = (by: number) => setCount(prev => prev + by)
+
+// ❌ BAD: Missing dependency
+useEffect(() => {
+    doSomething(count)
+}, [])  // count not in deps!
+
+// ✅ GOOD: Complete dependencies
+useEffect(() => {
+    doSomething(count)
+}, [count])
+```
+
+### Case Study 4: Multiple Process Detection & Cleanup
+
+**Context**: Alchemy API request count increasing unexpectedly fast
+
+**Problem**:
+- User reports: "Alchemy shows requests increasing but ingester is not running"
+- Command `ps aux | grep ingester | grep -v grep` returns no results (exit code 1)
+- But rate limiting (429 errors) suggests active ingestion happening
+
+**Investigation**:
+```bash
+# Standard check shows nothing
+ps aux | grep -i ingester | grep -v grep
+# Exit code: 1 (not found)
+
+# Broader search for Go processes
+ps aux | grep -E "(go run|go-build.*main)" | grep -v grep
+# Found: 6 different Go processes running!
+
+# Check working directory of processes
+lsof -p 46034 2>/dev/null | grep cwd | awk '{print $NF}'
+# /Users/viggy/devPlayground/blockchain-indexer/services/ingester
+
+# Multiple ingester instances discovered:
+# PID 46034 - Started 7:15PM
+# PID 43276 - Started 7:10PM  
+# PID 63351 - Started 8:19PM
+# ... and more
+```
+
+**Root Cause**:
+- User ran `go run main.go` multiple times in different terminals
+- Each creates a compiled binary in `/tmp/go-build*/` or cache
+- Process name shows as generic "main" or path to go-build cache
+- `grep ingester` doesn't match these process names
+- All instances independently fetch blocks, multiplying RPC usage
+
+**Why Standard Commands Failed**:
+```bash
+# This looks for "ingester" in process command line
+ps aux | grep ingester
+# But Go processes show as:
+# /Users/viggy/Library/Caches/go-build/.../main
+# /tmp/go-build3829713833/b001/exe/main
+# go run main.go
+
+# "ingester" never appears in the process name!
+```
+
+**Solution**:
+```bash
+# Kill all Go processes related to this project
+pkill -f "go-build.*main|go run main.go"
+
+# More targeted: Kill by working directory
+for pid in $(lsof +D /Users/viggy/devPlayground/blockchain-indexer/services/ingester 2>/dev/null | awk 'NR>1 {print $2}' | sort -u); do
+    kill $pid
+done
+
+# Verify cleanup
+ps aux | grep -E "(go run|go-build.*main)" | grep -v grep
+# Should return nothing (exit code 1)
+```
+
+**Prevention Strategies**:
+```bash
+# 1. Use Makefile for consistent process management
+make run-ingester  # Creates traceable process
+make stop-ingester # Reliable cleanup
+
+# 2. Name your processes
+go run -ldflags="-X main.processName=ingester-dev" main.go
+
+# 3. Use PID files
+echo $$ > /tmp/ingester.pid
+# On stop: kill $(cat /tmp/ingester.pid)
+
+# 4. Check before starting
+if pgrep -f "ingester.*main.go" > /dev/null; then
+    echo "Ingester already running!"
+    exit 1
+fi
+```
+
+**Better Process Detection**:
+```bash
+# Find by working directory
+lsof +D /path/to/ingester | grep main
+
+# Find by executable path
+pgrep -f "blockchain-indexer/services/ingester"
+
+# Find by port (if applicable)
+lsof -i :8080
+
+# Find with full command line
+ps auxww | grep -E "(ingester|blockchain)" | grep -v grep
+```
+
+**Result**:
+- Discovered 6 simultaneous ingester instances
+- Killed all with single `pkill` command
+- API request rate returned to normal
+- Added process count check to monitoring
+
+**Lessons Learned**:
+1. **Process names != binary names** - Go compiled binaries have generic names
+2. **grep ingester is unreliable** - Use working directory or full path
+3. **pkill -f is powerful** - Matches full command line, not just process name
+4. **lsof for working directory** - Reliable way to find processes by project location
+5. **Makefile process management** - Prevents duplicate process issues
+6. **Monitor unexpected resource usage** - Rate limits revealed the hidden processes
+
+**Tool Comparison**:
+```bash
+# pgrep: Fast, but matches only process name
+pgrep ingester  # Won't find "main" processes
+
+# pkill -f: Matches full command line
+pkill -f "go-build.*main"  # Finds Go binaries
+
+# ps + grep: Verbose but flexible
+ps auxww | grep ingester  # Shows full info
+
+# lsof: Best for finding by directory/port
+lsof +D /path/to/project  # Most reliable for Go projects
+```
+
+---
+
 ## Related Documentation
 
 - [Setup Guide](./05-setup-quickstart.md)

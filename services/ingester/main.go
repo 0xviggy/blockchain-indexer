@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -434,17 +435,88 @@ func (ing *Ingester) catchUpBlocks(chain ChainConfig, startBlock int64) error {
 func (ing *Ingester) processBlock(chain ChainConfig, blockNum int64) error {
 	client := ing.clients[chain.ChainID]
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// Step 1: Fetch block with transactions (outside DB transaction)
+	fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer fetchCancel()
 
-	// Fetch block with transactions
-	block, err := client.BlockByNumber(ctx, big.NewInt(blockNum))
+	block, err := client.BlockByNumber(fetchCtx, big.NewInt(blockNum))
 	if err != nil {
+		// Check if it's a transaction type error
+		if strings.Contains(err.Error(), "transaction type not supported") {
+			log.Printf("⚠️  [%s] Block %d contains unsupported transaction type, logging as skipped: %v", chain.Name, blockNum, err)
+			
+			// Log skipped block to database
+			if logErr := ing.logSkippedBlock(chain.ChainID, blockNum, "unsupported_tx_type", err.Error()); logErr != nil {
+				log.Printf("❌ Failed to log skipped block %d: %v", blockNum, logErr)
+			}
+			
+			// Skip this block and continue
+			return nil
+		}
 		return fmt.Errorf("failed to fetch block: %w", err)
 	}
 
-	// Start transaction
-	tx, err := ing.db.BeginTx(ctx, nil)
+	// Step 2: Fetch all transaction receipts (outside DB transaction)
+	receiptFetchStart := time.Now()
+	receipts := make([]*types.Receipt, len(block.Transactions()))
+	var totalReceiptTime time.Duration
+	var failedReceipts int
+	
+	for i, ethTx := range block.Transactions() {
+		txReceiptStart := time.Now()
+		
+		// Retry logic for receipt fetching
+		var receipt *types.Receipt
+		var err error
+		maxRetries := 2
+		
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			receiptCtx, receiptCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			receipt, err = client.TransactionReceipt(receiptCtx, ethTx.Hash())
+			receiptCancel()
+			
+			if err == nil {
+				break // Success!
+			}
+			
+			if attempt < maxRetries-1 {
+				time.Sleep(time.Duration(attempt+1) * 300 * time.Millisecond) // Backoff: 300ms, 600ms
+			}
+		}
+		
+		txReceiptDuration := time.Since(txReceiptStart)
+		totalReceiptTime += txReceiptDuration
+		
+		if err != nil {
+			failedReceipts++
+			log.Printf("❌ [%s] Failed to get receipt for tx %s (block %d, idx %d) after %d attempts (%v): %v", 
+				chain.Name, ethTx.Hash().Hex(), blockNum, i, maxRetries, txReceiptDuration, err)
+			
+			// CRITICAL: Don't save incomplete data - abort this block
+			return fmt.Errorf("failed to fetch receipt for tx %s after %d retries: %w", ethTx.Hash().Hex(), maxRetries, err)
+		} else {
+			// Log timing for slow receipt fetches
+			if txReceiptDuration > 1*time.Second {
+				log.Printf("🐌 [%s] Slow receipt fetch for tx %s took %v", 
+					chain.Name, ethTx.Hash().Hex()[:10], txReceiptDuration)
+			}
+		}
+		receipts[i] = receipt
+	}
+	
+	// Log summary of receipt fetching
+	if len(block.Transactions()) > 0 {
+		avgTime := totalReceiptTime / time.Duration(len(block.Transactions()))
+		log.Printf("✅ [%s] Block %d: Successfully fetched all %d receipts in %v (avg: %v per receipt)", 
+			chain.Name, blockNum, len(block.Transactions()), time.Since(receiptFetchStart), avgTime)
+	}
+
+	// Step 3: Start database transaction (now that we have all data)
+	dbStart := time.Now()
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer dbCancel()
+
+	tx, err := ing.db.BeginTx(dbCtx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -455,12 +527,11 @@ func (ing *Ingester) processBlock(chain ChainConfig, blockNum int64) error {
 		return fmt.Errorf("failed to insert block: %w", err)
 	}
 
-	// Insert transactions with receipts
-	for txIndex, ethTx := range block.Transactions() {
-		if err := ing.insertTransaction(tx, chain.ChainID, block, ethTx, uint(txIndex), client, ctx); err != nil {
-			return fmt.Errorf("failed to insert transaction %s: %w", ethTx.Hash().Hex(), err)
-		}
+	// Insert transactions with pre-fetched receipts (batch insert for performance)
+	if err := ing.insertTransactionsBatch(tx, chain.ChainID, block, receipts); err != nil {
+		return fmt.Errorf("failed to insert transactions: %w", err)
 	}
+	log.Printf("⏱️  [%s] Block %d: Inserted %d transactions in %v", chain.Name, blockNum, len(block.Transactions()), time.Since(dbStart))
 
 	// Update checkpoint
 	if err := ing.updateCheckpoint(tx, chain.ChainID, blockNum); err != nil {
@@ -512,7 +583,7 @@ func (ing *Ingester) insertBlock(tx *sql.Tx, chainID int64, block *types.Block) 
 	return err
 }
 
-func (ing *Ingester) insertTransaction(tx *sql.Tx, chainID int64, block *types.Block, ethTx *types.Transaction, txIndex uint, client *ethclient.Client, ctx context.Context) error {
+func (ing *Ingester) insertTransaction(tx *sql.Tx, chainID int64, block *types.Block, ethTx *types.Transaction, receipt *types.Receipt) error {
 	query := `
 		INSERT INTO transactions (
 			chain_id, tx_hash, block_number, tx_index, from_address, to_address,
@@ -532,19 +603,6 @@ func (ing *Ingester) insertTransaction(tx *sql.Tx, chainID int64, block *types.B
 		toAddr = ethTx.To().Hex()
 	}
 
-	// Fetch transaction receipt to get actual status and gas used
-	receipt, err := client.TransactionReceipt(ctx, ethTx.Hash())
-	if err != nil {
-		// Log warning but continue with unknown status
-		log.Printf("⚠️  Failed to get receipt for tx %s: %v (using status=1, gas_used=0)", ethTx.Hash().Hex(), err)
-		// Use defaults if receipt fetch fails
-		receipt = &types.Receipt{
-			Status:           1, // Assume success
-			GasUsed:          0,
-			TransactionIndex: txIndex,
-		}
-	}
-
 	_, err = tx.Exec(query,
 		chainID,
 		ethTx.Hash().Hex(),
@@ -561,6 +619,69 @@ func (ing *Ingester) insertTransaction(tx *sql.Tx, chainID int64, block *types.B
 		receipt.GasUsed, // Actual gas consumed
 	)
 
+	return err
+}
+
+func (ing *Ingester) insertTransactionsBatch(tx *sql.Tx, chainID int64, block *types.Block, receipts []*types.Receipt) error {
+	if len(block.Transactions()) == 0 {
+		return nil
+	}
+
+	// Build batch INSERT query
+	query := `
+		INSERT INTO transactions (
+			chain_id, tx_hash, block_number, tx_index, from_address, to_address,
+			value, gas_limit, gas_price, input_data, nonce, status, gas_used
+		) VALUES `
+	
+	values := []interface{}{}
+	valueStrings := []string{}
+	
+	for i, ethTx := range block.Transactions() {
+		receipt := receipts[i]
+		
+		// Get transaction sender
+		from, err := types.Sender(types.LatestSignerForChainID(big.NewInt(chainID)), ethTx)
+		if err != nil {
+			return fmt.Errorf("failed to get sender for tx %s: %w", ethTx.Hash().Hex(), err)
+		}
+
+		toAddr := ""
+		if ethTx.To() != nil {
+			toAddr = ethTx.To().Hex()
+		}
+
+		// Add placeholders for this transaction ($1, $2, $3..., $13)
+		paramOffset := i * 13
+		valueStrings = append(valueStrings, fmt.Sprintf(
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			paramOffset+1, paramOffset+2, paramOffset+3, paramOffset+4,
+			paramOffset+5, paramOffset+6, paramOffset+7, paramOffset+8,
+			paramOffset+9, paramOffset+10, paramOffset+11, paramOffset+12, paramOffset+13,
+		))
+		
+		// Add values in order
+		values = append(values,
+			chainID,
+			ethTx.Hash().Hex(),
+			block.Number().Int64(),
+			receipt.TransactionIndex,
+			from.Hex(),
+			toAddr,
+			ethTx.Value().String(),
+			ethTx.Gas(),
+			ethTx.GasPrice().String(),
+			ethTx.Data(),
+			ethTx.Nonce(),
+			receipt.Status,
+			receipt.GasUsed,
+		)
+	}
+	
+	query += strings.Join(valueStrings, ", ")
+	query += " ON CONFLICT (chain_id, tx_hash) DO NOTHING"
+	
+	_, err := tx.Exec(query, values...)
 	return err
 }
 
@@ -589,6 +710,21 @@ func (ing *Ingester) updateCheckpoint(tx *sql.Tx, chainID int64, blockNum int64)
 	`
 
 	_, err := tx.Exec(query, chainID, blockNum)
+	return err
+}
+
+func (ing *Ingester) logSkippedBlock(chainID int64, blockNum int64, reason string, errorMsg string) error {
+	query := `
+		INSERT INTO skipped_blocks (chain_id, block_number, skip_reason, error_message, skipped_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (chain_id, block_number)
+		DO UPDATE SET 
+			retry_count = skipped_blocks.retry_count + 1,
+			last_retry_at = NOW(),
+			error_message = EXCLUDED.error_message
+	`
+	
+	_, err := ing.db.Exec(query, chainID, blockNum, reason, errorMsg)
 	return err
 }
 
