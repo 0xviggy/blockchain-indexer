@@ -10,11 +10,14 @@ help:
 	@echo "  make logs            - View all container logs"
 	@echo "  make status          - Check status of all services"
 	@echo ""
-	@echo "Database:"
-	@echo "  make migrate         - Run database migrations"
+	@echo "Database Migrations (golang-migrate):"
+	@echo "  make migrate-up      - Apply all pending migrations"
 	@echo "  make migrate-down    - Rollback last migration"
+	@echo "  make migrate-status  - Show current migration version"
+	@echo "  make migrate-create  - Create new migration file"
+	@echo "  make migrate-force   - Force set migration version (recovery)"
 	@echo "  make db-shell        - Open PostgreSQL shell"
-	@echo "  make db-reset        - Reset database (WARNING: deletes all data)"
+	@echo "  make db-reset        - Drop all tables and re-migrate (⚠️  DELETES DATA)"
 	@echo ""
 	@echo "Development:"
 	@echo "  make run-ingester    - Start ingester service (stops existing first)"
@@ -28,18 +31,26 @@ help:
 	@echo "  make redis-cli       - Open Redis CLI"
 	@echo "  make kafka-topics    - List Kafka topics"
 	@echo "  make clean           - Clean up all data and stop services"
+	@echo ""
+	@echo "📚 Documentation:"
+	@echo "  docs/DEPLOYMENT.md   - Production deployment & Supabase setup"
+	@echo "  docs/DEVELOPMENT_STATUS.md - Current progress & roadmap"
 
 # Initial setup
-setup: docker-up wait-for-services migrate
+setup: docker-up wait-for-services migrate-up
 	@echo "✅ Setup complete! Infrastructure is ready."
 	@echo ""
 	@echo "Quick start:"
 	@echo "  1. Update .env with your RPC API keys"
-	@echo "  2. make run-ingester"
+	@echo "  2. make run-ingester    # Terminal 1"
+	@echo "  3. make run-api         # Terminal 2"
+	@echo "  4. cd web && npm run dev # Terminal 3"
 	@echo ""
 	@echo "Web UIs available at:"
 	@echo "  - Kafka UI: http://localhost:8080"
 	@echo "  - pgAdmin: http://localhost:5050"
+	@echo ""
+	@echo "📚 See docs/DEPLOYMENT.md for Supabase setup"
 
 # Docker commands
 docker-up:
@@ -68,23 +79,45 @@ wait-for-services:
 	@docker exec indexer-redis redis-cli ping > /dev/null 2>&1 || (echo "❌ Redis not ready" && exit 1)
 	@echo "✅ All services ready"
 
-# Database commands
-migrate:
-	@echo "🔄 Running database migrations..."
-	@PGPASSWORD=password psql -h localhost -U indexer -d indexer -f database/migrations/001_initial_schema.sql
+# Database commands (using golang-migrate)
+MIGRATION_PATH=database/migrations
+DATABASE_URL ?= postgresql://indexer:password@localhost:5432/indexer?sslmode=disable
+
+migrate-up:
+	@echo "📈 Applying migrations..."
+	@migrate -path $(MIGRATION_PATH) -database "$(DATABASE_URL)" up
 	@echo "✅ Migrations complete"
 
 migrate-down:
-	@echo "⏮️  Rolling back migrations..."
-	@echo "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" | PGPASSWORD=password psql -h localhost -U indexer -d indexer
+	@echo "📉 Rolling back last migration..."
+	@migrate -path $(MIGRATION_PATH) -database "$(DATABASE_URL)" down 1
 	@echo "✅ Rollback complete"
+
+migrate-status:
+	@echo "📊 Migration status:"
+	@migrate -path $(MIGRATION_PATH) -database "$(DATABASE_URL)" version
+
+migrate-create:
+	@read -p "Migration name: " name; \
+	migrate create -ext sql -dir $(MIGRATION_PATH) -seq $$name
+	@echo "✅ Created migration files"
+
+migrate-force:
+	@read -p "Force version to: " version; \
+	migrate -path $(MIGRATION_PATH) -database "$(DATABASE_URL)" force $$version
+
+# Legacy commands (kept for backwards compatibility)
+migrate: migrate-up
 
 db-shell:
 	@echo "🐘 Opening PostgreSQL shell..."
-	@PGPASSWORD=password psql -h localhost -U indexer -d indexer
+	@docker exec -it indexer-postgres psql -U indexer -d indexer
 
-db-reset: migrate-down migrate
-	@echo "✅ Database reset complete"
+db-reset:
+	@echo "⚠️  This will DELETE ALL DATA. Are you sure? [y/N] " && read ans && [ $${ans:-N} = y ]
+	@migrate -path $(MIGRATION_PATH) -database "$(DATABASE_URL)" drop -f
+	@echo "✅ Database dropped"
+	@make migrate-up
 
 # Utility commands
 redis-cli:
