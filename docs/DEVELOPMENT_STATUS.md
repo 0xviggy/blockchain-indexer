@@ -90,7 +90,7 @@ The ingester service is functionally working but has **data quality issues** tha
 
 **Phase 2: Receipt Retry Logic & Fail-Fast** (Nov 26, 2025 - Afternoon)
 - **Problem Discovered**: 39% of transactions had `gas_used = 0` due to failed receipt fetches
-- **Root Cause**: No retry logic for transient RPC errors (rate limiting, network glitches)
+- **Root Cause**: No retry logic for wtransient RPC errors (rate limiting, network glitches)
 - **Solution**: Added exponential backoff retry with fail-fast behavior
 
 ```go
@@ -1275,6 +1275,422 @@ Analysis: `docs/MULTICHAIN_SPEC.md`
 
 ---
 
+## 🚀 Detailed Next Steps Roadmap
+
+### Phase 1: Data Completeness (CRITICAL - Week 1)
+
+#### Task 1.1: Event Log Parsing ⭐⭐⭐ (HIGHEST PRIORITY)
+**Effort**: 4-6 hours  
+**Impact**: Unlocks all analytics features  
+**Status**: ❌ Not started
+
+**Current Issue**: Events table is empty because ingester doesn't parse receipt logs.
+
+**Implementation** (in `services/ingester/main.go`, around line 600):
+
+```go
+// Parse logs from receipt
+for _, log := range receipt.Logs {
+    event := models.Event{
+        ChainID:          chainID,
+        TransactionHash:  tx.Hash,
+        LogIndex:         log.Index,
+        ContractAddress:  log.Address.Hex(),
+        Topic0:           log.Topics[0].Hex(), // Event signature
+        Topic1:           safeTopicAccess(log.Topics, 1),
+        Topic2:           safeTopicAccess(log.Topics, 2),
+        Topic3:           safeTopicAccess(log.Topics, 3),
+        Data:             hexutil.Encode(log.Data),
+        BlockNumber:      block.Number.Int64(),
+        BlockTimestamp:   time.Unix(int64(block.Time), 0),
+    }
+    events = append(events, event)
+}
+
+// Batch insert events
+_, err = tx.CopyFrom(
+    ctx,
+    pgx.Identifier{"events"},
+    []string{"chain_id", "transaction_hash", "log_index", ...},
+    pgx.CopyFromSlice(len(events), func(i int) ([]any, error) {
+        e := events[i]
+        return []any{e.ChainID, e.TransactionHash, e.LogIndex, ...}, nil
+    }),
+)
+```
+
+**Test Plan**:
+1. Check `SELECT COUNT(*) FROM events` - should be >0 after parsing
+2. Query Transfer events: `SELECT * FROM events WHERE topic0 = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef' LIMIT 10`
+3. UI Events tab should show decoded events
+
+---
+
+#### Task 1.2: Reorg Detection ⭐⭐⭐ (CRITICAL)
+**Effort**: 3-4 hours  
+**Impact**: Prevents data corruption  
+**Status**: ❌ Not started
+
+**Current Risk**: If Ethereum reorgs, we'll have duplicate/incorrect data.
+
+**Algorithm**:
+```go
+func (i *Ingester) detectReorg(ctx context.Context, chainID int64) error {
+    // Get last 100 blocks from DB
+    var dbBlocks []models.Block
+    err := i.db.Select(&dbBlocks, 
+        `SELECT block_number, block_hash FROM blocks 
+         WHERE chain_id = $1 ORDER BY block_number DESC LIMIT 100`, chainID)
+    
+    // Compare with RPC
+    for _, dbBlock := range dbBlocks {
+        rpcBlock, err := i.client.BlockByNumber(ctx, big.NewInt(dbBlock.BlockNumber))
+        if err != nil { return err }
+        
+        if rpcBlock.Hash().Hex() != dbBlock.BlockHash {
+            log.Warn().Int64("reorg_at_block", dbBlock.BlockNumber).Msg("Reorg detected")
+            return i.handleReorg(ctx, chainID, dbBlock.BlockNumber)
+        }
+    }
+    return nil
+}
+
+func (i *Ingester) handleReorg(ctx context.Context, chainID, fromBlock int64) error {
+    // Delete affected blocks and cascade to txs/events
+    _, err := i.db.Exec(`
+        DELETE FROM blocks 
+        WHERE chain_id = $1 AND block_number >= $2
+    `, chainID, fromBlock)
+    
+    // Update checkpoint to re-ingest
+    i.checkpoint = fromBlock - 1
+    return err
+}
+```
+
+**Test Plan**:
+1. Manually create inconsistent block hash in DB
+2. Run reorg detection
+3. Verify block is deleted and re-ingested
+
+---
+
+### Phase 2: Observability (Important - Week 1)
+
+#### Task 2.1: Prometheus Metrics ⭐⭐
+**Effort**: 3-4 hours  
+**Impact**: Enables monitoring and alerting  
+**Status**: ❌ Not started
+
+**Implementation** (add to `services/api/main.go`):
+
+```go
+import "github.com/prometheus/client_golang/prometheus/promhttp"
+
+var (
+    requestDuration = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name: "api_request_duration_seconds",
+            Help: "API request latency",
+        },
+        []string{"endpoint", "method"},
+    )
+    
+    blockLag = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "indexer_block_lag_seconds",
+            Help: "Time since last indexed block",
+        },
+        []string{"chain_id"},
+    )
+)
+
+func init() {
+    prometheus.MustRegister(requestDuration, blockLag)
+}
+
+// Add to main()
+http.Handle("/metrics", promhttp.Handler())
+```
+
+**Metrics to Track**:
+- `api_request_duration_seconds` - API latency (p50/p99)
+- `indexer_block_lag_seconds` - Ingestion lag per chain
+- `indexer_blocks_processed_total` - Throughput counter
+- `indexer_errors_total` - Error rate
+
+**Grafana Dashboard**: See `monitoring/grafana/dashboards/indexer.json`
+
+---
+
+#### Task 2.2: Structured Logging ⭐
+**Effort**: 2-3 hours  
+**Impact**: Better debugging and log aggregation  
+**Status**: ❌ Not started
+
+**Replace** `fmt.Println` with **zerolog**:
+
+```go
+import "github.com/rs/zerolog/log"
+
+log.Info().
+    Int64("chain_id", chainID).
+    Int64("block_number", blockNum).
+    Int("tx_count", len(txs)).
+    Dur("duration", elapsed).
+    Msg("Block processed")
+
+log.Error().
+    Err(err).
+    Str("rpc_url", rpcURL).
+    Msg("RPC connection failed")
+```
+
+**Benefits**: JSON logs, log levels, structured fields, performance (zero-alloc).
+
+---
+
+### Phase 3: Performance (Important - Week 1-2)
+
+#### Task 3.1: Redis Caching ⭐⭐
+**Effort**: 4-6 hours  
+**Impact**: 10x API latency improvement  
+**Status**: ❌ Not started (Redis container exists but unused)
+
+**Cache Strategy**:
+
+| Endpoint | Key Pattern | TTL | Invalidation |
+|----------|-------------|-----|--------------|
+| `/api/chains` | `chains:all` | 1 hour | On chain config change |
+| `/api/blocks/:hash` | `block:${hash}` | 1 hour | Never (immutable) |
+| `/api/transactions/:hash` | `tx:${hash}` | 1 hour | Never (immutable) |
+| `/api/blocks?chain_id=1&page=1` | `blocks:1:1:10` | 5 min | On new block |
+
+**Implementation** (add to `services/api/main.go`):
+
+```go
+import "github.com/redis/go-redis/v9"
+
+var rdb *redis.Client
+
+func init() {
+    rdb = redis.NewClient(&redis.Options{
+        Addr: os.Getenv("REDIS_URL"),
+    })
+}
+
+func getTransaction(w http.ResponseWriter, r *http.Request) {
+    hash := chi.URLParam(r, "hash")
+    cacheKey := fmt.Sprintf("tx:%s", hash)
+    
+    // Try cache first
+    cached, err := rdb.Get(r.Context(), cacheKey).Result()
+    if err == nil {
+        w.Write([]byte(cached))
+        return
+    }
+    
+    // Query DB
+    var tx models.Transaction
+    err = db.Get(&tx, "SELECT * FROM transactions WHERE transaction_hash = $1", hash)
+    if err != nil {
+        http.Error(w, err.Error(), 500)
+        return
+    }
+    
+    json, _ := json.Marshal(tx)
+    rdb.Set(r.Context(), cacheKey, json, 1*time.Hour) // Cache for 1 hour
+    w.Write(json)
+}
+```
+
+**Performance Impact**: p99 latency 200ms → 20ms (10x improvement)
+
+---
+
+#### Task 3.2: API Rate Limiting ⭐
+**Effort**: 2-3 hours  
+**Impact**: Prevent abuse  
+**Status**: ❌ Not started
+
+**Implementation** (use `github.com/didip/tollbooth`):
+
+```go
+import "github.com/didip/tollbooth/v7"
+
+limiter := tollbooth.NewLimiter(100, nil) // 100 req/sec per IP
+limiter.SetIPLookups([]string{"X-Real-IP", "X-Forwarded-For"})
+
+r.Use(tollbooth.LimitHandler(limiter))
+```
+
+**Limits**:
+- Public endpoints: 100 req/sec per IP
+- Admin endpoints: 10 req/sec per API key
+- WebSocket: 1 connection per IP
+
+---
+
+### Phase 4: Testing & CI/CD (Important - Week 2)
+
+#### Task 4.1: Unit Tests ⭐
+**Effort**: 1-2 days (prioritize high-value tests)  
+**Status**: ❌ 0% coverage
+
+**Priority Test Targets**:
+
+1. Event log parsing logic
+2. Reorg detection algorithm
+3. Batch INSERT builder
+4. API endpoint handlers
+5. Cache key generation
+
+**Example Test** (`services/ingester/main_test.go`):
+
+```go
+func TestParseEventLogs(t *testing.T) {
+    receipt := &types.Receipt{
+        Logs: []*types.Log{
+            {
+                Address: common.HexToAddress("0x123..."),
+                Topics: []common.Hash{
+                    common.HexToHash("0xddf252ad..."), // Transfer
+                },
+                Data: []byte{...},
+            },
+        },
+    }
+    
+    events := parseEventLogs(receipt, 1, "0xabc...")
+    assert.Equal(t, 1, len(events))
+    assert.Equal(t, "0xddf252ad...", events[0].Topic0)
+}
+```
+
+**Run Tests**: `go test ./... -cover`
+
+**Target Coverage**: 80% for ingester/API, 70% for frontend
+
+---
+
+#### Task 4.2: CI/CD Pipeline ⭐
+**Effort**: 4 hours  
+**Status**: ❌ Not started
+
+**GitHub Actions** (`.github/workflows/ci.yml`):
+
+```yaml
+name: CI/CD
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
+        with: {go-version: '1.23'}
+      - run: go test ./...
+      
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - run: docker build -t indexer-ingester services/ingester
+      - run: docker build -t indexer-api services/api
+```
+
+**Deploy**: Railway (backend) + Vercel (frontend) on merge to main
+
+---
+
+### Phase 5: Polish & Production (Week 2-3)
+
+#### Task 5.1: Frontend Error Boundaries
+**Effort**: 2-3 hours  
+**Status**: ❌ Not started
+
+Add React error boundaries to prevent full UI crashes.
+
+---
+
+#### Task 5.2: Load Testing
+**Effort**: 3-4 hours  
+**Status**: ❌ Not started
+
+Use `k6` to simulate 1000 req/sec, measure p99 latency.
+
+---
+
+#### Task 5.3: Deployment
+**Effort**: 4-6 hours  
+**Status**: ❌ Not started
+
+Deploy to Railway (backend) + Vercel (frontend), configure environment variables, set up monitoring.
+
+---
+
+### Phase 6: Processor Service (OPTIONAL - Only if >10 chains)
+
+**Current Architecture**: Ingester → PostgreSQL (Direct write)  
+**Future Architecture**: Ingester → Kafka → Processor → PostgreSQL
+
+**When to Build**: Only if supporting >10 chains. Current direct-write is simpler and sufficient.
+
+**Effort**: 2-3 days
+
+---
+
+## 📆 Recommended Implementation Timeline
+
+### Week 1: Data Completeness & Monitoring (Critical)
+- **Day 1**: Event log parsing (4-6 hours) ⭐⭐⭐
+- **Day 2**: Reorg detection (3-4 hours) + Testing ⭐⭐⭐
+- **Day 3**: Prometheus metrics (3-4 hours) ⭐⭐
+- **Day 4**: Redis caching (4-6 hours) ⭐⭐
+- **Day 5**: Structured logging + Rate limiting (4-5 hours) ⭐
+
+**Deliverable**: Production-ready indexer with complete data and monitoring
+
+### Week 2: Testing & Polish
+- **Day 1-2**: Unit tests (high value targets) ⭐
+- **Day 3**: CI/CD pipeline ⭐
+- **Day 4**: Frontend polish (error boundaries, loading states)
+- **Day 5**: Deployment to staging (Railway + Vercel)
+
+**Deliverable**: Live demo at staging.your-domain.com
+
+### Week 3+: Scale & Optimize (Optional)
+- Load testing
+- Performance tuning
+- Additional chains (BSC, Avalanche)
+- Advanced features (address analytics, MEV detection)
+
+---
+
+## 🎯 Success Metrics by Phase
+
+### After Week 1 (Core Features):
+- ✅ Events table populated (>10K events)
+- ✅ No reorg-related data corruption
+- ✅ Prometheus metrics exposed at `/metrics`
+- ✅ API p99 latency <100ms (with Redis caching)
+- ✅ Structured JSON logs
+
+### After Week 2 (Production Ready):
+- ✅ 80%+ test coverage for critical paths
+- ✅ CI/CD pipeline passing
+- ✅ Staging deployment live
+- ✅ All 5 chains indexed with <30s lag
+
+### Production Deployment:
+- ✅ 99.9% uptime
+- ✅ <60s block lag per chain
+- ✅ <100ms API p99 latency
+- ✅ 100% data accuracy
+- ✅ Monitoring & alerting operational
+
+---
+
 ## 📅 Timeline
 
 ```
@@ -1290,8 +1706,10 @@ Future       📋 Phase 5.4: Kafka (if needed)
 
 ---
 
-**Next Action**: Implement transaction receipt fetching (2-4 hours) - See [Current Sprint](#current-sprint-backend-data-correctness-critical)
+**Next Action**: Implement event log parsing (Task 1.1, 4-6 hours) - Highest priority for unlocking analytics features. See detailed implementation above.
 
 ---
+
+*Last Updated: November 29, 2025*
 
 *This document is the single source of truth for project progress. Update after each major milestone.*
