@@ -1,10 +1,13 @@
-.PHONY: help setup docker-up docker-down migrate migrate-down db-shell redis-cli kafka-topics clean logs status run-ingester run-processor run-api test
+.PHONY: help setup setup-full docker-up docker-down migrate migrate-down db-shell db-seed db-clear-seeds redis-cli kafka-topics clean logs status run-ingester run-processor run-api test generate-seeds explore-rpc
 
 help:
 	@echo "🚀 Blockchain Indexer - Development Commands"
 	@echo ""
+	@echo "⭐ Quick Start:"
+	@echo "  make setup-full      - Complete setup with sample data (recommended)"
+	@echo "  make setup           - Setup infrastructure + migrations only"
+	@echo ""
 	@echo "Setup & Infrastructure:"
-	@echo "  make setup           - Complete initial setup (docker + migrations)"
 	@echo "  make docker-up       - Start all infrastructure (postgres, redis, kafka)"
 	@echo "  make docker-down     - Stop all infrastructure"
 	@echo "  make logs            - View all container logs"
@@ -18,6 +21,8 @@ help:
 	@echo "  make migrate-force   - Force set migration version (recovery)"
 	@echo "  make db-shell        - Open PostgreSQL shell"
 	@echo "  make db-reset        - Drop all tables and re-migrate (⚠️  DELETES DATA)"
+	@echo "  make db-seed         - Load sample data for development"
+	@echo "  make db-clear-seeds  - Clear sample data (keeps real data)"
 	@echo ""
 	@echo "Development:"
 	@echo "  make run-ingester    - Start ingester service (stops existing first)"
@@ -33,24 +38,43 @@ help:
 	@echo "  make clean           - Clean up all data and stop services"
 	@echo ""
 	@echo "📚 Documentation:"
+	@echo "  SANDBOX_SETUP.md     - Complete developer setup guide"
+	@echo "  DATABASE_GUIDE.md    - Database management & migrations"
+	@echo "  PROGRESS_TRACKING.md - Project status & roadmap"
+	@echo ""
+	@echo "📚 Documentation:"
 	@echo "  docs/DEPLOYMENT.md   - Production deployment & Supabase setup"
 	@echo "  docs/DEVELOPMENT_STATUS.md - Current progress & roadmap"
 
-# Initial setup
+# Initial setup (infrastructure + migrations only)
 setup: docker-up wait-for-services migrate-up
 	@echo "✅ Setup complete! Infrastructure is ready."
 	@echo ""
-	@echo "Quick start:"
-	@echo "  1. Update .env with your RPC API keys"
-	@echo "  2. make run-ingester    # Terminal 1"
-	@echo "  3. make run-api         # Terminal 2"
-	@echo "  4. cd web && npm run dev # Terminal 3"
+	@echo "Next steps:"
+	@echo "  1. Load sample data (optional): make db-seed"
+	@echo "  2. Start API: make run-api"
+	@echo "  3. Start UI: cd web && npm install && npm run dev"
+	@echo "  4. Access UI: http://localhost:5173"
 	@echo ""
-	@echo "Web UIs available at:"
-	@echo "  - Kafka UI: http://localhost:8080"
-	@echo "  - pgAdmin: http://localhost:5050"
+	@echo "Optional - Start ingester (requires RPC keys in .env):"
+	@echo "  make run-ingester"
 	@echo ""
-	@echo "📚 See docs/DEPLOYMENT.md for Supabase setup"
+	@echo "📚 Full guide: SANDBOX_SETUP.md"
+
+# Complete setup with sample data (recommended for new developers)
+setup-full: docker-up wait-for-services migrate-up db-seed
+	@echo "✅ Setup complete! Infrastructure + sample data loaded."
+	@echo ""
+	@echo "🎉 Your sandbox is ready with sample blockchain data!"
+	@echo ""
+	@echo "Start developing:"
+	@echo "  Terminal 1: make run-api"
+	@echo "  Terminal 2: cd web && npm install && npm run dev"
+	@echo ""
+	@echo "Then visit: http://localhost:5173"
+	@echo ""
+	@echo "📚 See SANDBOX_SETUP.md for full guide"
+
 
 # Docker commands
 docker-up:
@@ -83,7 +107,10 @@ wait-for-services:
 MIGRATION_PATH=database/migrations
 DATABASE_URL ?= postgresql://indexer:password@localhost:5432/indexer?sslmode=disable
 
-migrate-up:
+check-migrate:
+	@which migrate > /dev/null || (echo "❌ golang-migrate not found!" && echo "" && echo "Install it:" && echo "  macOS: brew install golang-migrate" && echo "  Linux: curl -L https://github.com/golang-migrate/migrate/releases/download/v4.16.2/migrate.linux-amd64.tar.gz | tar xvz && sudo mv migrate /usr/local/bin/" && echo "" && echo "See SANDBOX_SETUP.md for details" && exit 1)
+
+migrate-up: check-migrate
 	@echo "📈 Applying migrations..."
 	@migrate -path $(MIGRATION_PATH) -database "$(DATABASE_URL)" up
 	@echo "✅ Migrations complete"
@@ -118,6 +145,21 @@ db-reset:
 	@migrate -path $(MIGRATION_PATH) -database "$(DATABASE_URL)" drop -f
 	@echo "✅ Database dropped"
 	@make migrate-up
+
+db-seed:
+	@echo "🌱 Seeding database with sample data..."
+	@for seed in database/seeds/*.sql; do \
+		echo "  Loading $$(basename $$seed)..."; \
+		docker exec -i indexer-postgres psql -U indexer -d indexer < $$seed || exit 1; \
+	done
+	@echo "✅ Seeding complete"
+
+db-clear-seeds:
+	@echo "🧹 Clearing seed data (blocks < 1000)..."
+	@docker exec indexer-postgres psql -U indexer -d indexer -c "DELETE FROM logs WHERE tx_hash IN (SELECT tx_hash FROM transactions WHERE block_number < 1000);"
+	@docker exec indexer-postgres psql -U indexer -d indexer -c "DELETE FROM transactions WHERE block_number < 1000;"
+	@docker exec indexer-postgres psql -U indexer -d indexer -c "DELETE FROM blocks WHERE block_number < 1000;"
+	@echo "✅ Seed data cleared"
 
 # Utility commands
 redis-cli:
@@ -180,6 +222,20 @@ explore-rpc:
 	fi
 	@echo "🔍 Exploring RPC data..."
 	cd scripts && go mod download && go run explore_rpc.go
+
+# Generate seed data from real blockchain
+generate-seeds:
+	@if [ -z "$$ETH_RPC_URL" ]; then \
+		echo "Using free public RPC (slower)..."; \
+		export ETH_RPC_URL="https://eth.llamarpc.com"; \
+		cd scripts && go mod download && ETH_RPC_URL="https://eth.llamarpc.com" go run explore_rpc.go --generate-seeds; \
+	else \
+		cd scripts && go mod download && go run explore_rpc.go --generate-seeds; \
+	fi
+	@echo ""
+	@echo "✅ Seed file generated!"
+	@echo "📁 Location: database/seeds/001_sample_blocks.sql"
+	@echo "🚀 Run: make db-seed"
 
 # Cleanup
 clean:

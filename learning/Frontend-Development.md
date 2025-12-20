@@ -1,5 +1,8 @@
 # Frontend Development & Cross-Stack Skills
 
+> ⚠️ **EDUCATIONAL MATERIAL** - Interview prep & learning reference  
+> For project frontend implementation, see [../web/WEB_PROGRESS_TRACKING.md](../web/WEB_PROGRESS_TRACKING.md)
+
 Comprehensive guide to frontend development for blockchain applications, covering frameworks, libraries, best practices, cross-stack transferable skills, and production readiness.
 
 ## Table of Contents

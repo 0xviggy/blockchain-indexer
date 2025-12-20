@@ -1,196 +1,380 @@
-[![GitHub Workflow Status (branch)](https://img.shields.io/github/actions/workflow/status/golang-migrate/migrate/ci.yaml?branch=master)](https://github.com/golang-migrate/migrate/actions/workflows/ci.yaml?query=branch%3Amaster)
-[![GoDoc](https://pkg.go.dev/badge/github.com/golang-migrate/migrate)](https://pkg.go.dev/github.com/golang-migrate/migrate/v4)
-[![Coverage Status](https://img.shields.io/coveralls/github/golang-migrate/migrate/master.svg)](https://coveralls.io/github/golang-migrate/migrate?branch=master)
-[![packagecloud.io](https://img.shields.io/badge/deb-packagecloud.io-844fec.svg)](https://packagecloud.io/golang-migrate/migrate?filter=debs)
-[![Docker Pulls](https://img.shields.io/docker/pulls/migrate/migrate.svg)](https://hub.docker.com/r/migrate/migrate/)
-![Supported Go Versions](https://img.shields.io/badge/Go-1.20%2C%201.21-lightgrey.svg)
-[![GitHub Release](https://img.shields.io/github/release/golang-migrate/migrate.svg)](https://github.com/golang-migrate/migrate/releases)
-[![Go Report Card](https://goreportcard.com/badge/github.com/golang-migrate/migrate/v4)](https://goreportcard.com/report/github.com/golang-migrate/migrate/v4)
+# Blockchain Indexer
 
-# migrate
+Multi-chain blockchain indexing service with real-time data ingestion, REST API, and web UI.
 
-__Database migrations written in Go. Use as [CLI](#cli-usage) or import as [library](#use-in-your-go-project).__
-
-* Migrate reads migrations from [sources](#migration-sources)
-   and applies them in correct order to a [database](#databases).
-* Drivers are "dumb", migrate glues everything together and makes sure the logic is bulletproof.
-   (Keeps the drivers lightweight, too.)
-* Database drivers don't assume things or try to correct user input. When in doubt, fail.
-
-Forked from [mattes/migrate](https://github.com/mattes/migrate)
-
-## Databases
-
-Database drivers run migrations. [Add a new database?](database/driver.go)
-
-* [PostgreSQL](database/postgres)
-* [PGX v4](database/pgx)
-* [PGX v5](database/pgx/v5)
-* [Redshift](database/redshift)
-* [Ql](database/ql)
-* [Cassandra / ScyllaDB](database/cassandra)
-* [SQLite](database/sqlite)
-* [SQLite3](database/sqlite3) ([todo #165](https://github.com/mattes/migrate/issues/165))
-* [SQLCipher](database/sqlcipher)
-* [MySQL / MariaDB](database/mysql)
-* [Neo4j](database/neo4j)
-* [MongoDB](database/mongodb)
-* [CrateDB](database/crate) ([todo #170](https://github.com/mattes/migrate/issues/170))
-* [Shell](database/shell) ([todo #171](https://github.com/mattes/migrate/issues/171))
-* [Google Cloud Spanner](database/spanner)
-* [CockroachDB](database/cockroachdb)
-* [YugabyteDB](database/yugabytedb)
-* [ClickHouse](database/clickhouse)
-* [Firebird](database/firebird)
-* [MS SQL Server](database/sqlserver)
-* [RQLite](database/rqlite)
-
-### Database URLs
-
-Database connection strings are specified via URLs. The URL format is driver dependent but generally has the form: `dbdriver://username:password@host:port/dbname?param1=true&param2=false`
-
-Any [reserved URL characters](https://en.wikipedia.org/wiki/Percent-encoding#Percent-encoding_reserved_characters) need to be escaped. Note, the `%` character also [needs to be escaped](https://en.wikipedia.org/wiki/Percent-encoding#Percent-encoding_the_percent_character)
-
-Explicitly, the following characters need to be escaped:
-`!`, `#`, `$`, `%`, `&`, `'`, `(`, `)`, `*`, `+`, `,`, `/`, `:`, `;`, `=`, `?`, `@`, `[`, `]`
-
-It's easiest to always run the URL parts of your DB connection URL (e.g. username, password, etc) through an URL encoder. See the example Python snippets below:
-
-```bash
-$ python3 -c 'import urllib.parse; print(urllib.parse.quote(input("String to encode: "), ""))'
-String to encode: FAKEpassword!#$%&'()*+,/:;=?@[]
-FAKEpassword%21%23%24%25%26%27%28%29%2A%2B%2C%2F%3A%3B%3D%3F%40%5B%5D
-$ python2 -c 'import urllib; print urllib.quote(raw_input("String to encode: "), "")'
-String to encode: FAKEpassword!#$%&'()*+,/:;=?@[]
-FAKEpassword%21%23%24%25%26%27%28%29%2A%2B%2C%2F%3A%3B%3D%3F%40%5B%5D
-$
-```
-
-## Migration Sources
-
-Source drivers read migrations from local or remote sources. [Add a new source?](source/driver.go)
-
-* [Filesystem](source/file) - read from filesystem
-* [io/fs](source/iofs) - read from a Go [io/fs](https://pkg.go.dev/io/fs#FS)
-* [Go-Bindata](source/go_bindata) - read from embedded binary data ([jteeuwen/go-bindata](https://github.com/jteeuwen/go-bindata))
-* [pkger](source/pkger) - read from embedded binary data ([markbates/pkger](https://github.com/markbates/pkger))
-* [GitHub](source/github) - read from remote GitHub repositories
-* [GitHub Enterprise](source/github_ee) - read from remote GitHub Enterprise repositories
-* [Bitbucket](source/bitbucket) - read from remote Bitbucket repositories
-* [Gitlab](source/gitlab) - read from remote Gitlab repositories
-* [AWS S3](source/aws_s3) - read from Amazon Web Services S3
-* [Google Cloud Storage](source/google_cloud_storage) - read from Google Cloud Platform Storage
-
-## CLI usage
-
-* Simple wrapper around this library.
-* Handles ctrl+c (SIGINT) gracefully.
-* No config search paths, no config files, no magic ENV var injections.
-
-__[CLI Documentation](cmd/migrate)__
-
-### Basic usage
-
-```bash
-$ migrate -source file://path/to/migrations -database postgres://localhost:5432/database up 2
-```
-
-### Docker usage
-
-```bash
-$ docker run -v {{ migration dir }}:/migrations --network host migrate/migrate
-    -path=/migrations/ -database postgres://localhost:5432/database up 2
-```
-
-## Use in your Go project
-
-* API is stable and frozen for this release (v3 & v4).
-* Uses [Go modules](https://golang.org/cmd/go/#hdr-Modules__module_versions__and_more) to manage dependencies.
-* To help prevent database corruptions, it supports graceful stops via `GracefulStop chan bool`.
-* Bring your own logger.
-* Uses `io.Reader` streams internally for low memory overhead.
-* Thread-safe and no goroutine leaks.
-
-__[Go Documentation](https://pkg.go.dev/github.com/golang-migrate/migrate/v4)__
-
-```go
-import (
-    "github.com/golang-migrate/migrate/v4"
-    _ "github.com/golang-migrate/migrate/v4/database/postgres"
-    _ "github.com/golang-migrate/migrate/v4/source/github"
-)
-
-func main() {
-    m, err := migrate.New(
-        "github://mattes:personal-access-token@mattes/migrate_test",
-        "postgres://localhost:5432/database?sslmode=enable")
-    m.Steps(2)
-}
-```
-
-Want to use an existing database client?
-
-```go
-import (
-    "database/sql"
-    _ "github.com/lib/pq"
-    "github.com/golang-migrate/migrate/v4"
-    "github.com/golang-migrate/migrate/v4/database/postgres"
-    _ "github.com/golang-migrate/migrate/v4/source/file"
-)
-
-func main() {
-    db, err := sql.Open("postgres", "postgres://localhost:5432/database?sslmode=enable")
-    driver, err := postgres.WithInstance(db, &postgres.Config{})
-    m, err := migrate.NewWithDatabaseInstance(
-        "file:///migrations",
-        "postgres", driver)
-    m.Up() // or m.Step(2) if you want to explicitly set the number of migrations to run
-}
-```
-
-## Getting started
-
-Go to [getting started](GETTING_STARTED.md)
-
-## Tutorials
-
-* [CockroachDB](database/cockroachdb/TUTORIAL.md)
-* [PostgreSQL](database/postgres/TUTORIAL.md)
-
-(more tutorials to come)
-
-## Migration files
-
-Each migration has an up and down migration. [Why?](FAQ.md#why-two-separate-files-up-and-down-for-a-migration)
-
-```bash
-1481574547_create_users_table.up.sql
-1481574547_create_users_table.down.sql
-```
-
-[Best practices: How to write migrations.](MIGRATIONS.md)
-
-## Coming from another db migration tool?
-
-Check out [migradaptor](https://github.com/musinit/migradaptor/).
-*Note: migradaptor is not affliated or supported by this project*
-
-## Versions
-
-Version | Supported? | Import | Notes
---------|------------|--------|------
-**master** | :white_check_mark: | `import "github.com/golang-migrate/migrate/v4"` | New features and bug fixes arrive here first |
-**v4** | :white_check_mark: | `import "github.com/golang-migrate/migrate/v4"` | Used for stable releases |
-**v3** | :x: | `import "github.com/golang-migrate/migrate"` (with package manager) or `import "gopkg.in/golang-migrate/migrate.v3"` (not recommended) | **DO NOT USE** - No longer supported |
-
-## Development and Contributing
-
-Yes, please! [`Makefile`](Makefile) is your friend,
-read the [development guide](CONTRIBUTING.md).
-
-Also have a look at the [FAQ](FAQ.md).
+**Status**: ✅ Functional Development Environment  
+**Version**: 0.1.0 (Pre-production)
 
 ---
 
-Looking for alternatives? [https://awesome-go.com/#database](https://awesome-go.com/#database).
+## 🚀 Quick Start
+
+### For Developers (< 10 minutes)
+
+```bash
+# 1. Clone
+git clone https://github.com/0xviggy/blockchain-indexer.git
+cd blockchain-indexer
+
+# 2. Install golang-migrate (required)
+brew install golang-migrate  # macOS
+# Linux: see SANDBOX_SETUP.md
+
+# 3. Load sample data
+make db-seed            # Optional but recommended
+
+# 4. Start services
+make run-api            # Terminal 1
+cd web && npm run dev   # Terminal 2
+```
+
+**Result**: Functional UI at http://localhost:5173 with sample blockchain data (no ingester needed!)
+
+**Full setup guide**: [docs/setup/SANDBOX_SETUP.md](docs/setup/SANDBOX_SETUP.md)
+
+---
+
+## 📚 Documentation
+
+### Getting Started
+
+| Document | Purpose | Read Time |
+|----------|---------|-----------|
+| **[docs/setup/SANDBOX_SETUP.md](docs/setup/SANDBOX_SETUP.md)** | Set up local development environment | 5 min |
+| **[docs/setup/DATABASE_GUIDE.md](docs/setup/DATABASE_GUIDE.md)** | Database setup, migrations, seed data | 10 min |
+| **[docs/PROGRESS_TRACKING.md](docs/PROGRESS_TRACKING.md)** | Project status, next steps, roadmap | 5 min |
+
+### Architecture & Design
+
+| Document | Purpose |
+|----------|---------|
+| [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md) | Architecture rationale, multi-chain strategy |
+| [docs/TECHNICAL_SPEC.md](docs/TECHNICAL_SPEC.md) | Implementation details, API specs |
+| [docs/BUSINESS_SPEC.md](docs/BUSINESS_SPEC.md) | Product requirements |
+| [docs/setup/DEPLOYMENT.md](docs/setup/DEPLOYMENT.md) | Production deployment guide |
+| [docs/PROJECT_TEMPLATE.md](docs/PROJECT_TEMPLATE.md) | Project structure template for new projects |
+
+### Learning & Reference
+
+| Document | Purpose |
+|----------|---------|
+| [learning/](learning/) | Educational deep-dives and interview prep |
+| [learning/System-Design-Architecture.md](learning/System-Design-Architecture.md) | System design patterns |
+| [learning/Go-Programming.md](learning/Go-Programming.md) | Go patterns and concepts |
+| [learning/MEV_ANALYSIS.md](learning/MEV_ANALYSIS.md) | MEV detection strategies |
+
+---
+
+## 🎯 What This Does
+
+### Core Features
+
+- **Multi-Chain Indexing** - Ethereum, Polygon, Arbitrum, Optimism, Base
+- **Real-Time Ingestion** - Continuous blockchain data indexing
+- **REST API** - Query blocks, transactions, logs
+- **Web UI** - Block explorer and ingester control panel
+- **Data Quality** - Transaction receipts, status tracking, error handling
+
+### Use Cases
+
+- 📊 Blockchain analytics and insights
+- 🔍 Transaction and block exploration  
+- 📈 Protocol activity monitoring
+- 💱 Cross-chain transaction tracking
+- 🧪 Development and testing with sample data
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│  Blockchain │────▶│   Ingester   │────▶│  PostgreSQL │
+│  RPC Nodes  │     │   Service    │     │  Database   │
+└─────────────┘     └──────────────┘     └─────────────┘
+                                                 │
+                                                 ▼
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│   Web UI    │◀────│  API Service │◀────│  Partitioned│
+│   (React)   │     │   (Go)       │     │   Tables    │
+└─────────────┘     └──────────────┘     └─────────────┘
+```
+
+### Tech Stack
+
+- **Backend**: Go 1.21+
+- **Database**: PostgreSQL 15 (partitioned tables, migrations)
+- **Frontend**: React 18 + TypeScript + Vite
+- **Infrastructure**: Docker Compose
+- **Caching**: Redis (planned for production)
+- **Messaging**: Direct PostgreSQL writes (Kafka planned for >10 chains)
+
+---
+
+## 📦 Project Structure
+
+```
+blockchain-indexer/
+├── README.md                  # This file (navigation hub)
+├── Makefile                   # Central development commands
+│
+├── docs/                      # Project documentation
+│   ├── DESIGN_DECISIONS.md    # Architecture & design rationale
+│   ├── PROGRESS_TRACKING.md   # Project status
+│   ├── TECHNICAL_SPEC.md      # Implementation details
+│   ├── BUSINESS_SPEC.md       # Product requirements
+│   ├── PROJECT_TEMPLATE.md    # Template for new projects
+│   └── setup/                 # ⭐ Setup & operational guides
+│       ├── SANDBOX_SETUP.md   # Local development
+│       ├── DATABASE_GUIDE.md  # Database operations
+│       └── DEPLOYMENT.md      # Production deployment
+│
+├── services/                  # Backend services
+│   ├── ingester/              # Blockchain data ingestion
+│   └── api/                   # REST API server
+│
+├── web/                       # Frontend React app
+│   └── src/                   # React components
+│
+├── database/                  # Database files
+│   ├── migrations/            # Schema migrations
+│   └── seeds/                 # Sample data
+│
+├── infrastructure/            # Docker & deployment
+│   └── docker/                # Docker Compose configs
+│
+├── learning/                  # ⭐ Educational materials
+│   ├── Go-Programming.md      # Go concepts & patterns
+│   ├── System-Design-Architecture.md
+│   ├── MEV_ANALYSIS.md        # MEV detection research
+│   └── ...                    # More interview prep guides
+│
+└── shared/                    # Shared Go packages
+    ├── config/                # Configuration
+    └── models/                # Data models
+```
+
+---
+
+## 🛠️ Development Commands
+
+### Infrastructure
+
+```bash
+make setup           # Complete first-time setup
+make docker-up       # Start Docker containers
+make docker-down     # Stop Docker containers
+make status          # Check service status
+make logs            # View container logs
+```
+
+### Database
+
+```bash
+make migrate-up      # Apply pending migrations
+make migrate-status  # Check migration version
+make db-seed         # Load sample data
+make db-shell        # PostgreSQL CLI
+```
+
+### Services
+
+```bash
+make run-api         # Start API server (port 8000)
+make run-ingester    # Start blockchain ingester
+make stop-services   # Stop all Go services
+```
+
+### Frontend
+
+```bash
+cd web
+npm run dev          # Development server (port 5173)
+npm run build        # Production build
+npm run preview      # Preview production build
+```
+
+**Full command reference**: `make help`
+
+---
+
+## 🎓 For New Developers
+
+### 1. Environment Setup
+
+Follow **[docs/setup/SANDBOX_SETUP.md](docs/setup/SANDBOX_SETUP.md)** for complete setup guide including:
+- Prerequisites installation
+- Repository configuration  
+- Infrastructure startup
+- Sample data loading
+- Service verification
+
+### 2. Database Workflow
+
+See **[docs/setup/DATABASE_GUIDE.md](docs/setup/DATABASE_GUIDE.md)** for:
+- Migration system
+- Creating schema changes
+- Seed data management
+- Team coordination
+- Troubleshooting
+
+### 3. Current Status
+
+Check **[docs/PROGRESS_TRACKING.md](docs/PROGRESS_TRACKING.md)** for:
+- What's implemented
+- What's in progress
+- What's next
+- How to contribute
+
+### 4. Architecture
+
+Read **[docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md)** for:
+- Why decisions were made
+- Multi-chain support strategy
+- Database partitioning approach
+
+---
+
+## 🔄 Development Workflow
+
+### Daily Routine
+
+```bash
+# 1. Sync with team
+git pull
+make migrate-up
+
+# 2. Start development
+make docker-up
+make run-api
+cd web && npm run dev
+
+# 3. Make changes, test, commit
+git checkout -b feature/my-feature
+# ... make changes ...
+git commit -am "Add feature X"
+git push origin feature/my-feature
+```
+
+### Working with Database
+
+```bash
+# Create migration
+make migrate-create
+# Enter name: add_my_table
+
+# Edit migration files
+vim database/migrations/000004_add_my_table.up.sql
+vim database/migrations/000004_add_my_table.down.sql
+
+# Test
+make migrate-up
+make migrate-down
+make migrate-up
+```
+
+---
+
+## 📊 Current Status
+
+### ✅ Completed
+
+- Infrastructure (Docker Compose)
+- Database schema with migrations
+- Ingester service (blocks + transactions)
+- API service (REST endpoints)
+- Frontend UI (block explorer)
+- Transaction receipt fetching
+- Error tracking and retries
+- Sample seed data
+
+### 🔄 In Progress
+
+- Event log parsing
+- Protocol signature matching
+- UI polish and enhancements
+
+### 📋 Planned
+
+- Analytics features
+- MEV detection
+- Production deployment
+- Monitoring and metrics
+
+**Detailed status**: [docs/PROGRESS_TRACKING.md](docs/PROGRESS_TRACKING.md)
+
+---
+
+## 🤝 Contributing
+
+### Prerequisites
+
+- Read [docs/setup/SANDBOX_SETUP.md](docs/setup/SANDBOX_SETUP.md) for environment setup
+- Review [docs/PROGRESS_TRACKING.md](docs/PROGRESS_TRACKING.md) for current priorities
+- Check [docs/setup/DATABASE_GUIDE.md](docs/setup/DATABASE_GUIDE.md) for database workflow
+
+### Process
+
+1. Create feature branch: `git checkout -b feature/name`
+2. Make changes and test locally
+3. Ensure migrations are tested (up + down)
+4. Commit with clear message
+5. Push and create pull request
+
+### Code Style
+
+- **Go**: Follow standard Go conventions (`gofmt`, `golint`)
+- **TypeScript**: ESLint configuration in `web/`
+- **SQL**: Use migrations for all schema changes
+
+---
+
+## 📞 Support
+
+### Documentation
+
+Start here based on your need:
+
+- **Setup help**: [docs/setup/SANDBOX_SETUP.md](docs/setup/SANDBOX_SETUP.md)
+- **Database questions**: [docs/setup/DATABASE_GUIDE.md](docs/setup/DATABASE_GUIDE.md)
+- **Project status**: [docs/PROGRESS_TRACKING.md](docs/PROGRESS_TRACKING.md)
+- **Architecture**: [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md)
+- **Implementation**: [docs/TECHNICAL_SPEC.md](docs/TECHNICAL_SPEC.md)
+
+### Troubleshooting
+
+Common issues and solutions:
+
+- **Docker hanging**: See [docs/setup/SANDBOX_SETUP.md#troubleshooting](docs/setup/SANDBOX_SETUP.md#troubleshooting)
+- **Migration errors**: See [docs/setup/DATABASE_GUIDE.md#troubleshooting](docs/setup/DATABASE_GUIDE.md#troubleshooting)
+- **Port conflicts**: See [docs/setup/SANDBOX_SETUP.md#port-already-in-use](docs/setup/SANDBOX_SETUP.md#port-already-in-use)
+
+### Getting Help
+
+- Check documentation first (links above)
+- Search existing issues
+- Create [GitHub issue](https://github.com/0xviggy/blockchain-indexer/issues)
+
+---
+
+## 📝 License
+
+[Your License Here]
+
+---
+
+## 🙏 Acknowledgments
+
+Built with:
+- [golang-migrate](https://github.com/golang-migrate/migrate) - Database migrations
+- [go-ethereum](https://github.com/ethereum/go-ethereum) - Ethereum client library
+- [React](https://react.dev/) - UI framework
+- [PostgreSQL](https://www.postgresql.org/) - Database
+- [Docker](https://www.docker.com/) - Containerization
+
+---
+
+**Ready to start?** → [docs/setup/SANDBOX_SETUP.md](docs/setup/SANDBOX_SETUP.md)
+
+
+

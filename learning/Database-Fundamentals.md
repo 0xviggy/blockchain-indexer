@@ -1,5 +1,8 @@
 # Database Fundamentals
 
+> ⚠️ **EDUCATIONAL MATERIAL** - Interview prep & learning reference  
+> For project-specific database setup, see [../DATABASE_GUIDE.md](../DATABASE_GUIDE.md)
+
 > **Purpose**: Core database theory and concepts applicable across all database systems - ACID properties, normalization, indexing theory, transactions, consistency models, and database design principles.
 
 ---

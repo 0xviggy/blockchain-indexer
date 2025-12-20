@@ -1,6 +1,10 @@
 # PostgreSQL Database Guide
 
-> **Complete guide to PostgreSQL for blockchain indexing, including schema design, performance optimization, partitioning, and production deployment.**
+> ⚠️ **EDUCATIONAL MATERIAL** - Interview prep & learning reference  
+> For project-specific database setup, see [../DATABASE_GUIDE.md](../DATABASE_GUIDE.md)
+
+> **PostgreSQL-specific guide** for blockchain indexing: schema design, partitioning, performance optimization.  
+> For database theory (ACID, normalization, CAP theorem, index theory), see [Database-Fundamentals.md](./Database-Fundamentals.md)
 
 ---
 
@@ -655,44 +659,7 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY address_stats;
 
 ---
 
-### Q3: Explain ACID properties and why they matter for blockchain indexing
-
-**Answer:**
-
-**ACID** = Atomicity, Consistency, Isolation, Durability
-
-**Atomicity**: All-or-nothing. Critical when inserting block + transactions:
-```go
-tx, _ := db.Begin()
-tx.Exec("INSERT INTO blocks ...")
-for _, transaction := range block.Transactions {
-    tx.Exec("INSERT INTO transactions ...")
-}
-tx.Commit()  // Either all succeed or all rollback
-```
-
-**Consistency**: Data always valid. Foreign keys ensure referential integrity:
-```sql
-FOREIGN KEY (chain_id) REFERENCES chains(chain_id)
--- Can't insert transaction for non-existent chain
-```
-
-**Isolation**: Concurrent transactions don't interfere. Prevents race conditions during reorg handling:
-```sql
-BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
--- Check for reorg
--- Delete if needed
--- Insert new data
-COMMIT;
-```
-
-**Durability**: Once committed, data survives crashes. WAL (Write-Ahead Logging) ensures data written to disk before returning success.
-
-**Why it matters**: Blockchain indexers handle financial data. Any data corruption = loss of user trust. ACID guarantees prevent double-spends, missing transactions, and inconsistent state.
-
----
-
-### Q4: How do you handle database schema changes in production?
+### Q3: How do you handle database schema changes in production?
 
 **Answer:**
 
@@ -748,7 +715,7 @@ make migrate-up
 
 ---
 
-### Q5: What's the difference between VACUUM and ANALYZE?
+### Q4: What's the difference between VACUUM and ANALYZE?
 
 **Answer:**
 
@@ -788,7 +755,7 @@ WHERE tablename = 'transactions';
 
 ---
 
-### Q6: How do you implement read replicas for scaling?
+### Q5: How do you implement read replicas for scaling?
 
 **Answer:**
 
@@ -842,7 +809,7 @@ SELECT
 
 ---
 
-### Q7: What are the pros/cons of JSONB vs separate columns?
+### Q6: What are the pros/cons of JSONB vs separate columns?
 
 **Answer:**
 

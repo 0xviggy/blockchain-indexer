@@ -1,5 +1,8 @@
 # Message Queues & Caching
 
+> ⚠️ **EDUCATIONAL MATERIAL** - Interview prep & learning reference  
+> Kafka is NOT currently used in this project. See [../DESIGN_DECISIONS.md](../DESIGN_DECISIONS.md) for why we use direct PostgreSQL writes.
+
 > **Purpose**: Comprehensive guide to Kafka, Redis, and event-driven architecture for blockchain indexing systems with integrated interview Q&A.
 
 ---

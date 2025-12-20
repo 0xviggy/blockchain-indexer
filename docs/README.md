@@ -6,21 +6,28 @@ This folder contains **project documentation** for the blockchain indexer applic
 
 ## 📋 Documentation Index
 
-### Core Project Documentation
+### Project Documentation
 
 | Document | Purpose | Audience |
 |----------|---------|----------|
 | [Business Specification](./BUSINESS_SPEC.md) | Product requirements, use cases, business context | Product, Business, Stakeholders |
-| [Technical Specification](./TECHNICAL_SPEC.md) | System architecture, component design, API specs | Engineers, Architects |
-| [Development Status](./DEVELOPMENT_STATUS.md) | Current progress, roadmap, implementation status | Team, Management |
-| [Chain Support](./CHAIN_SUPPORT.md) | Multi-chain strategy, supported networks, priorities | Engineers, Product |
-| [MEV Analysis](./MEV_ANALYSIS.md) | MEV detection algorithms, analysis strategies | Engineers, Researchers |
+| [Technical Specification](./TECHNICAL_SPEC.md) | Implementation details, API specs, service design | Engineers, Architects |
+| [Project Template](./PROJECT_TEMPLATE.md) | Reusable project structure guide | Engineers starting new projects |
 
-### Reference Files
+### Setup & Operations (docs/setup/)
 
-| File | Purpose |
-|------|---------|
-| `rawtxt.md` | Raw notes and reference material |
+| Document | Purpose |
+|----------|---------|
+| [Sandbox Setup](./setup/SANDBOX_SETUP.md) | Local development environment setup |
+| [Database Guide](./setup/DATABASE_GUIDE.md) | Database operations, migrations, seeds |
+| [Deployment Guide](./setup/DEPLOYMENT.md) | Production deployment, Supabase setup |
+
+### Root-Level Documents
+
+| Document | Purpose |
+|----------|---------|
+| [DESIGN_DECISIONS.md](./DESIGN_DECISIONS.md) | Architecture rationale, multi-chain strategy |
+| [PROGRESS_TRACKING.md](./PROGRESS_TRACKING.md) | Project status and roadmap |
 
 ---
 
@@ -31,43 +38,41 @@ This folder contains **project documentation** for the blockchain indexer applic
 
 **Contains**:
 - ✅ Business requirements and specifications
-- ✅ Technical architecture and design documents
-- ✅ Development progress and roadmap
-- ✅ Feature specifications (chain support, MEV analysis)
-- ✅ API documentation
-- ✅ Deployment guides
+- ✅ Technical implementation details
+- ✅ Setup and deployment guides
+- ✅ Project structure template
 
 ### Learning Folder ([/learning](../learning/))
 **Purpose**: Educational materials, interview prep, technical deep-dives
 
+> ⚠️ Learning files are marked with an educational banner
+
 **Contains**:
-- ✅ Technology stack tutorials
-- ✅ Docker, Kubernetes, Database guides
-- ✅ Go programming concepts
-- ✅ Interview preparation materials
+- ✅ Technology stack tutorials (Go, PostgreSQL, Docker)
+- ✅ System design patterns
+- ✅ MEV analysis research
+- ✅ Interview preparation Q&A
 - ✅ Troubleshooting guides
-- ✅ Frontend development guides
 
 ---
 
-## �� Quick Links
+## 🔗 Quick Links
 
 ### For New Team Members
-1. Start with [Business Specification](./BUSINESS_SPEC.md) to understand the product
-2. Read [Technical Specification](./TECHNICAL_SPEC.md) for architecture overview
-3. Check [Development Status](./DEVELOPMENT_STATUS.md) for current state
-4. Visit [Learning Materials](../learning/) for hands-on guides
+1. Start with [SANDBOX_SETUP](./setup/SANDBOX_SETUP.md) to get running
+2. Read [DESIGN_DECISIONS](./DESIGN_DECISIONS.md) for architecture context
+3. Check [PROGRESS_TRACKING](./PROGRESS_TRACKING.md) for current state
+4. Visit [Learning Materials](../learning/) for deep-dives
 
 ### For Engineers
-- **Architecture**: [Technical Specification](./TECHNICAL_SPEC.md)
-- **Progress**: [Development Status](./DEVELOPMENT_STATUS.md)
-- **Chains**: [Chain Support](./CHAIN_SUPPORT.md)
+- **Architecture Rationale**: [DESIGN_DECISIONS.md](./DESIGN_DECISIONS.md)
+- **Implementation Details**: [Technical Specification](./TECHNICAL_SPEC.md)
+- **Database Operations**: [Database Guide](./setup/DATABASE_GUIDE.md)
 - **Learning**: [Learning Folder](../learning/)
 
 ### For Product/Business
 - **Overview**: [Business Specification](./BUSINESS_SPEC.md)
-- **Roadmap**: [Development Status](./DEVELOPMENT_STATUS.md)
-- **Chains**: [Chain Support](./CHAIN_SUPPORT.md)
+- **Roadmap**: [PROGRESS_TRACKING.md](./PROGRESS_TRACKING.md)
 
 ---
 
@@ -83,22 +88,5 @@ This folder contains **project documentation** for the blockchain indexer applic
 
 ---
 
-## 🔄 Document Maintenance
-
-### When to Update
-- **Business Spec**: When requirements or use cases change
-- **Technical Spec**: When architecture or design changes
-- **Development Status**: After completing each phase/feature
-- **Chain Support**: When adding/removing blockchain support
-- **MEV Analysis**: When updating detection algorithms
-
-### How to Update
-1. Edit the relevant markdown file
-2. Update the "Last Updated" date at the top
-3. Add entry to the updates/changelog section
-4. Notify team of significant changes
-
----
-
-**Last Updated**: November 26, 2025  
+**Last Updated**: December 20, 2025  
 **Maintained By**: Engineering Team

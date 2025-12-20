@@ -1,19 +1,19 @@
-# Project Development Template
+# Project Structure Template
 
-**Project Name**: Multi-Chain Blockchain Indexer  
-**Repository**: blockchain-indexer  
-**Last Updated**: December 19, 2025  
-**Purpose**: Complete project structure and development workflow template for future projects
+> **Purpose**: A reusable template for how to structure complex software projects.  
+> This project (blockchain-indexer) follows this pattern and can serve as a reference for new projects.
+
+**Last Updated**: December 20, 2025
 
 ---
 
 ## 📋 Table of Contents
 
-1. [Project Overview](#project-overview)
+1. [Documentation Philosophy](#documentation-philosophy)
 2. [Repository Structure](#repository-structure)
-3. [Technology Stack](#technology-stack)
-4. [Development Workflow](#development-workflow)
-5. [Documentation Strategy](#documentation-strategy)
+3. [Documentation Hierarchy](#documentation-hierarchy)
+4. [Technology Stack Decisions](#technology-stack-decisions)
+5. [Development Workflow](#development-workflow)
 6. [Infrastructure & DevOps](#infrastructure--devops)
 7. [Code Organization Patterns](#code-organization-patterns)
 8. [Development Lifecycle](#development-lifecycle)
@@ -22,175 +22,110 @@
 
 ---
 
-## 1. Project Overview
+## 1. Documentation Philosophy
 
-### Architecture Philosophy
+### Core Principle: README as the Hub
 
-**Multi-Service Microservices Architecture**
-- Independent services with clear responsibilities
-- Event-driven communication patterns
-- Database-per-service with shared schema
-- Infrastructure as Code (IaC)
-
-### Core Services
+**The root README.md should provide access to everything a developer needs:**
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                    Frontend Layer                     │
-│              React + Vite + TypeScript                │
-└───────────────────┬──────────────────────────────────┘
-                    │ REST API
-┌───────────────────┴──────────────────────────────────┐
-│                   Backend Services                    │
-├──────────────┬────────────────┬──────────────────────┤
-│   Ingester   │   Processor    │      API Server      │
-│   (Go)       │   (Planned)    │      (Go/Gin)        │
-└──────┬───────┴────────┬───────┴───────┬──────────────┘
-       │                │               │
-┌──────┴────────────────┴───────────────┴──────────────┐
-│            Infrastructure Layer                       │
-├───────────────┬──────────────┬───────────────────────┤
-│  PostgreSQL   │    Redis     │   Kafka/Redpanda      │
-│  (Primary DB) │   (Cache)    │  (Message Queue)      │
-└───────────────┴──────────────┴───────────────────────┘
+README.md (Hub)
+├── Quick Start (< 5 min to running)
+├── Links to Setup Guides → docs/setup/
+├── Links to Architecture → DESIGN_DECISIONS.md
+├── Links to Specs → docs/TECHNICAL_SPEC.md
+├── Links to Learning → learning/
+└── Links to Progress → PROGRESS_TRACKING.md
 ```
 
-### Business Domain
+### Documentation Types
 
-**Multi-Chain Blockchain Data Indexing**
-- Real-time blockchain data ingestion (Ethereum, Polygon, Arbitrum, Optimism, Base)
-- Transaction and event log parsing
-- REST API for blockchain data queries
-- Reorg detection and handling
-- Skipped block recovery system
+| Type | Location | Purpose |
+|------|----------|---------|
+| **Setup Guides** | `docs/setup/` | How to run the project |
+| **Architecture** | Root `DESIGN_DECISIONS.md` | Why decisions were made |
+| **Technical Spec** | `docs/TECHNICAL_SPEC.md` | What is implemented |
+| **Business Spec** | `docs/BUSINESS_SPEC.md` | What problem we solve |
+| **Progress** | Root `PROGRESS_TRACKING.md` | Current state |
+| **Learning** | `learning/` | Educational, interview prep |
+
+### Separation of Concerns
+
+- **Project Docs**: How to work on THIS project
+- **Educational Docs**: General concepts, interview prep (clearly labeled with ⚠️)
 
 ---
 
 ## 2. Repository Structure
 
-### Organized by Function
+### Recommended Layout
 
 ```
-blockchain-indexer/
-├── .env.example                    # Environment configuration template
-├── .gitignore                      # Git ignore patterns
-├── LICENSE                         # Project license
-├── Makefile                        # ⭐ Central development commands
-├── README.md                       # Project README (with badges)
-├── NEXT_STEPS.md                   # Current work & planning doc
+project-name/
+├── README.md                       # ⭐ Hub - links to everything
+├── DESIGN_DECISIONS.md             # Architecture rationale
+├── PROGRESS_TRACKING.md            # Current status
+├── Makefile                        # Central development commands
+├── .env.example                    # Environment template
 │
-├── database/                       # Database layer
-│   ├── backups/                    # Database backup scripts
-│   └── migrations/                 # SQL migration files
-│       ├── 000001_initial_schema.up.sql
-│       ├── 000001_initial_schema.down.sql
-│       ├── 000002_add_calldata_parsing.up.sql
-│       ├── 000002_add_calldata_parsing.down.sql
-│       ├── 000003_add_skipped_blocks.up.sql
-│       ├── 000003_add_skipped_blocks.down.sql
-│       └── README.md               # Migration guide (golang-migrate)
+├── docs/                           # Project documentation
+│   ├── README.md                   # Docs index
+│   ├── TECHNICAL_SPEC.md           # Implementation details
+│   ├── BUSINESS_SPEC.md            # Product requirements
+│   ├── PROJECT_TEMPLATE.md         # This file - structure guide
+│   └── setup/                      # ⭐ All setup guides together
+│       ├── SANDBOX_SETUP.md        # Local dev environment
+│       ├── DATABASE_GUIDE.md       # Database operations
+│       └── DEPLOYMENT.md           # Production deployment
 │
-├── docs/                           # ⭐ Comprehensive documentation
-│   ├── BUSINESS_SPEC.md            # Business requirements & KPIs
-│   ├── TECHNICAL_SPEC.md           # Architecture & technical design
-│   ├── DEPLOYMENT.md               # Production deployment guide
-│   ├── DEVELOPMENT_STATUS.md       # ⭐ Progress tracker & sprint log
-│   ├── CHAIN_SUPPORT.md            # Multi-chain configuration
-│   ├── MEV_ANALYSIS.md             # MEV detection strategies
-│   └── README.md                   # Documentation index
-│
-├── infrastructure/                 # Infrastructure as Code
-│   └── docker/
-│       ├── docker-compose.yml      # Local development stack
-│       └── init-db.sh              # Database initialization
-│
-├── learning/                       # ⭐ Learning & interview prep
+├── learning/                       # ⭐ Educational materials
 │   ├── README.md                   # Learning guide index
-│   ├── Go-Programming.md           # Go best practices + Q&A
-│   ├── PostgreSQL-Database.md      # Database design + Q&A
-│   ├── Docker-Kubernetes.md        # Containerization + Q&A
-│   ├── Message-Queues.md           # Kafka/Redis patterns + Q&A
-│   ├── System-Design-Architecture.md # System design + Q&A
-│   ├── Frontend-Development.md     # React/TypeScript + Q&A
-│   ├── Deployment-Production.md    # DevOps & CI/CD + Q&A
-│   ├── Database-Fundamentals.md    # Database theory + Q&A
-│   ├── Setup-Troubleshooting.md    # Common issues & fixes
-│   ├── REORGANIZATION_PLAN.md      # Documentation restructure plan
-│   └── archive/                    # Old learning files (kept for reference)
+│   └── [Topic].md                  # Topic guides with interview Q&A
 │
-├── monitoring/                     # Observability (Planned)
-│   ├── grafana/                    # Grafana dashboards
-│   └── prometheus/                 # Prometheus metrics config
-│
-├── scripts/                        # Utility scripts
-│   ├── explore_rpc.go              # RPC data exploration tool
-│   ├── test_blob_tx.go             # Blob transaction testing
-│   ├── test_recent_blob.go         # Recent blob validation
-│   ├── go.mod                      # Scripts module dependencies
-│   └── README.md                   # Scripts documentation
-│
-├── services/                       # ⭐ Backend microservices
-│   ├── ingester/                   # Blockchain data ingestion service
-│   │   ├── main.go                 # 746 lines - multi-chain ingester
-│   │   ├── go.mod                  # Service dependencies
-│   │   ├── ingester                # Compiled binary
-│   │   ├── ingester-skipped        # Skipped block recovery binary
-│   │   ├── ingester-test           # Testing binary
-│   │   └── README.md               # Ingester documentation
-│   │
+├── services/                       # Backend services
 │   ├── api/                        # REST API service
-│   │   ├── main.go                 # 948 lines - API server (Gin)
-│   │   ├── go.mod                  # Service dependencies
-│   │   ├── api-control             # Control panel binary
-│   │   ├── api-skipped             # Skipped blocks API binary
-│   │   └── api-test                # Testing binary
-│   │
-│   └── processor/                  # Event processing service (Planned)
-│       └── (future implementation)
+│   └── ingester/                   # Data ingestion service
 │
-├── shared/                         # Shared Go packages
-│   ├── go.mod                      # Shared module dependencies
-│   ├── config/
-│   │   └── config.go               # Configuration loading
-│   └── models/
-│       └── models.go               # Shared data models (121 lines)
+├── web/                            # Frontend application
+│   └── README.md                   # Frontend-specific docs
 │
-└── web/                            # ⭐ Frontend application
-    ├── package.json                # NPM dependencies
-    ├── vite.config.ts              # Vite configuration
-    ├── tsconfig.json               # TypeScript config
-    ├── tailwind.config.js          # Tailwind CSS config
-    ├── postcss.config.js           # PostCSS config
-    ├── eslint.config.js            # ESLint rules
-    ├── index.html                  # Entry HTML
-    ├── GETTING_STARTED.md          # Frontend setup guide
-    ├── VERIFICATION_UI.md          # UI verification checklist
-    ├── README.md                   # Frontend documentation
-    ├── public/                     # Static assets
-    └── src/
-        ├── main.tsx                # React entry point
-        ├── App.tsx                 # Main app component (983 lines)
-        ├── App.css                 # App styles
-        ├── index.css               # Global styles
-        ├── assets/                 # Images, fonts, etc.
-        ├── lib/
-        │   ├── api.ts              # API client
-        │   └── utils.ts            # Utility functions
-        └── types/
-            └── api.ts              # TypeScript type definitions
+├── database/                       # Database files
+│   ├── migrations/                 # Schema migrations
+│   └── seeds/                      # Sample data
+│
+├── infrastructure/                 # DevOps & deployment
+│   └── docker/                     # Docker configs
+│
+└── scripts/                        # Utility scripts
 ```
-
-### Key Structural Decisions
-
-1. **Monorepo Pattern**: Single repository with multiple services
-2. **Clear Separation**: Docs, services, infrastructure, and shared code isolated
-3. **Documentation First**: Extensive docs alongside code
-4. **Learning Resources**: Integrated learning materials for team onboarding
-5. **Go Workspaces**: Multiple Go modules managed together (NOT USED - kept separate)
 
 ---
 
-## 3. Technology Stack
+## 3. Documentation Hierarchy
+
+### For This Project (blockchain-indexer)
+
+```
+README.md
+├── Quick Start → docs/setup/SANDBOX_SETUP.md
+├── Database Guide → docs/setup/DATABASE_GUIDE.md
+├── Architecture → DESIGN_DECISIONS.md
+│   └── Multi-chain strategy (merged from CHAIN_SUPPORT)
+├── Technical Details → docs/TECHNICAL_SPEC.md
+│   └── API specs, service details
+├── Business Context → docs/BUSINESS_SPEC.md
+├── Project Status → PROGRESS_TRACKING.md
+├── Deployment → docs/setup/DEPLOYMENT.md
+└── Learning Resources → learning/
+    ├── System-Design-Architecture.md
+    ├── Go-Programming.md
+    ├── MEV_ANALYSIS.md
+    └── ... other educational content
+```
+
+---
+
+## 4. Technology Stack Decisions
 
 ### Backend
 
@@ -237,7 +172,7 @@ blockchain-indexer/
 
 ---
 
-## 4. Development Workflow
+## 5. Development Workflow
 
 ### 🎯 Central Command: Makefile
 
@@ -318,86 +253,6 @@ test: Add or modify tests
 chore: Build/tooling changes
 perf: Performance improvement
 ```
-
----
-
-## 5. Documentation Strategy
-
-### Documentation Hierarchy
-
-```
-docs/
-├── README.md                    # Documentation index & navigation
-├── BUSINESS_SPEC.md            # Why? (Business requirements, KPIs, user needs)
-├── TECHNICAL_SPEC.md           # What? (Architecture, tech stack, APIs)
-├── DEVELOPMENT_STATUS.md       # ⭐ When? (Progress tracker, sprint log)
-├── DEPLOYMENT.md               # How? (Production deployment guide)
-└── [Domain-specific docs]      # Domain knowledge (chains, MEV, etc.)
-```
-
-### 🌟 DEVELOPMENT_STATUS.md - The Living Document
-
-**Purpose**: Central source of truth for project progress
-
-**Structure**:
-```markdown
-# Development Status & Progress Tracker
-
-## Current Status Overview
-[Table with phases, components, status, completion dates]
-
-## Current Sprint
-[Detailed breakdown of ongoing work with tasks]
-
-## Completed Work
-[Chronological log of completed features with details]
-
-## Technical Decisions Log
-[Record of major decisions and rationale]
-
-## Known Issues & TODOs
-[Tracked issues and future work]
-
-## Next Steps Roadmap
-[Prioritized upcoming work]
-```
-
-**Update Frequency**: After every significant change (commit, feature completion, blocker)
-
-**Benefits**:
-- ✅ Anyone can understand project state instantly
-- ✅ Historical context preserved
-- ✅ Helps with resume writing (detailed accomplishment log)
-- ✅ Facilitates handoffs between developers
-- ✅ Documents decision-making process
-
-### Documentation Types
-
-| Type | Example | Purpose | Update Frequency |
-|------|---------|---------|------------------|
-| **Business** | BUSINESS_SPEC.md | Requirements, KPIs | Quarterly |
-| **Technical** | TECHNICAL_SPEC.md | Architecture, design | Per major change |
-| **Progress** | DEVELOPMENT_STATUS.md | Current state | Daily/Per commit |
-| **Operational** | DEPLOYMENT.md | Deployment steps | Per release |
-| **Learning** | learning/*.md | Knowledge base | As needed |
-| **Code** | README.md (per service) | Service-specific | Per feature |
-| **Database** | migrations/README.md | Schema evolution | Per migration |
-
-### README.md Best Practices
-
-**Project Root README**:
-- Badges (build status, coverage, version)
-- Quick start (5 minute setup)
-- Architecture diagram
-- Links to detailed docs
-- Contribution guidelines
-
-**Service README**:
-- Service purpose (1-2 sentences)
-- Dependencies
-- Configuration
-- API endpoints (if applicable)
-- Examples
 
 ---
 

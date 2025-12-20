@@ -1,53 +1,32 @@
-# Technical Specification: High-Performance Blockchain Indexer
+# Technical Specification: Blockchain Indexer
 
-## System Overview
+**Project**: Multi-Chain Blockchain Indexer  
+**Last Updated**: December 20, 2025
 
-A distributed, event-driven blockchain indexer built with Rust/Go that ingests, processes, and serves blockchain data with sub-second latency, 99.9% uptime, and comprehensive observability.
+This document covers the technical implementation details: services, APIs, database schema, and code patterns.
+
+> **For architecture rationale**: See [DESIGN_DECISIONS.md](../DESIGN_DECISIONS.md)  
+> **For setup guides**: See [setup/](setup/)  
+> **For current progress**: See [PROGRESS_TRACKING.md](../PROGRESS_TRACKING.md)
 
 ---
 
-## Architecture
+## System Overview
 
-### High-Level Components
+**Current Implementation**: Direct PostgreSQL writes (no message queue)  
+**Tech Stack**: Go 1.21+, PostgreSQL 15, React 18 + TypeScript  
+**Architecture**: Service-oriented with independent Go services
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                      Monitoring & Observability                   │
-│   Prometheus │ Grafana │ Jaeger │ AlertManager                   │
-└──────────────────────────────────────────────────────────────────┘
-                              ▲
-                              │ OpenTelemetry
-                              │
-┌──────────────────────────────────────────────────────────────────┐
-│                        Application Layer                          │
-│                                                                    │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐            │
-│  │  Ingester   │  │  Processor  │  │  API Server  │            │
-│  │  Service    │  │  Service    │  │              │            │
-│  └─────────────┘  └─────────────┘  └──────────────┘            │
-│         │                 │                 │                     │
-│         └────────┬────────┴─────────────────┘                     │
-│                  │                                                 │
-└──────────────────┼─────────────────────────────────────────────────┘
-                   │
-┌──────────────────┼─────────────────────────────────────────────────┐
-│                  │         Message Broker Layer                    │
-│         ┌────────▼────────┐                                       │
-│         │  Kafka/RabbitMQ │                                       │
-│         │  - raw.blocks   │                                       │
-│         │  - parsed.events│                                       │
-│         │  - system.reorg │                                       │
-│         └─────────────────┘                                       │
-└──────────────────────────────────────────────────────────────────┘
-                   │
-┌──────────────────┼─────────────────────────────────────────────────┐
-│                  │         Storage Layer                           │
-│   ┌──────────────▼──────────┐   ┌──────────────┐   ┌──────────┐ │
-│   │   PostgreSQL (Primary)   │   │ Redis Cache  │   │  S3/Blob │ │
-│   │   - Partitioned tables   │   │ - Hot data   │   │ Archives │ │
-│   │   - Indexed queries      │   │ - Query cache│   │          │ │
-│   └──────────────────────────┘   └──────────────┘   └──────────┘ │
-└──────────────────────────────────────────────────────────────────┘
+┌─────────────────┐     ┌──────────────┐     ┌─────────────┐
+│  Blockchain     │────▶│   Ingester   │────▶│  PostgreSQL │
+│  RPC Nodes      │     │  (Go Service)│     │  Partitioned│
+└─────────────────┘     └──────────────┘     └─────────────┘
+                                                    │
+┌─────────────┐     ┌──────────────┐                │
+│   Web UI    │◀────│  API Service │◀───────────────┘
+│   (React)   │     │  (Go/Gin)    │
+└─────────────┘     └──────────────┘
 ```
 
 ---
@@ -56,246 +35,208 @@ A distributed, event-driven blockchain indexer built with Rust/Go that ingests, 
 
 ### 1. Ingester Service
 
-**Responsibility**: Fetch blockchain data and publish to message broker
+**Responsibility**: Fetch blockchain data and write directly to PostgreSQL
 
-**Technology**: Rust (tokio, ethers-rs) or Go (go-ethereum client)
+**Technology**: Go 1.21+ (go-ethereum client)
 
-**Components**:
-- **RPC Client**: Connection pool with multiple providers
-- **WebSocket Subscriber**: Real-time block notifications
-- **Reorg Detector**: Track parent hashes, detect chain reorganizations
-- **Checkpoint Manager**: Persist last processed block number
-- **Message Producer**: Publish to Kafka/RabbitMQ
+**Current Implementation**:
+- **RPC Client**: go-ethereum `ethclient` with connection pooling
+- **WebSocket Subscriber**: Real-time block notifications via `SubscribeNewHead`
+- **HTTP Polling Fallback**: Automatic fallback if WebSocket unavailable
+- **Multi-chain Concurrency**: One goroutine per configured chain
+- **Direct Database Writes**: Batch inserts to partitioned PostgreSQL tables
+- **Checkpoint Management**: Track last indexed block per chain
+- **Skipped Block Tracking**: Record failed fetches for backfill
 
-**Key Algorithms**:
+**Code Example** (Go):
 
-```rust
-// Reorg Detection Algorithm
-async fn detect_reorg(current_block: Block, db: &Database) -> Result<Option<u64>> {
-    let stored_block = db.get_block(current_block.number)?;
-    
-    if stored_block.hash != current_block.parent_hash {
-        // Reorg detected! Find common ancestor
-        let mut rollback_to = current_block.number - 1;
-        
-        while rollback_to > 0 {
-            let stored = db.get_block(rollback_to)?;
-            let chain = rpc_client.get_block(rollback_to).await?;
-            
-            if stored.hash == chain.hash {
-                return Ok(Some(rollback_to));
-            }
-            rollback_to -= 1;
-        }
+```go
+// Multi-chain ingestion with goroutines
+func (ing *Ingester) start() {
+    for _, chain := range ing.chains {
+        ing.wg.Add(1)
+        go ing.ingestChain(chain)  // Concurrent per-chain ingestion
     }
-    
-    Ok(None)
+    ing.wg.Wait()
+}
+
+// Reorg Detection (current implementation)
+func (ing *Ingester) detectReorg(chainID int64, block *types.Block) (bool, error) {
+    stored, err := ing.db.GetBlock(chainID, block.NumberU64()-1)
+    if err != nil || stored.BlockHash != block.ParentHash().Hex() {
+        return true, nil  // Reorg detected - parent hash mismatch
+    }
+    return false, nil
 }
 ```
 
-**Configuration**:
-```yaml
-ingester:
-  rpc_urls:
-    - https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
-    - https://mainnet.infura.io/v3/YOUR_KEY
-  start_block: 18000000
-  batch_size: 100
-  checkpoint_interval: 10s
-  retry:
-    max_attempts: 5
-    backoff_ms: 1000
-    max_backoff_ms: 30000
+**Configuration** (Environment Variables):
+```bash
+# Per-chain configuration
+ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
+ETH_WS_URL=wss://eth-mainnet.g.alchemy.com/v2/YOUR_KEY  # Optional
+ETH_START_BLOCK=18000000  # Start block for historical sync
+
+POLYGON_RPC_URL=https://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY
+POLYGON_WS_URL=wss://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY
+POLYGON_START_BLOCK=50000000
+
+# Database
+DATABASE_URL=postgres://indexer:password@localhost:5432/indexer?sslmode=disable
 ```
 
 **Performance**:
-- **Target**: 100+ blocks/second ingestion
-- **Optimization**: Batch RPC calls, parallel processing
-- **Monitoring**: Ingestion lag, RPC latency, error rate
+- **Current**: 50-100 blocks/second per chain
+- **Bottleneck**: RPC receipt calls (1 per transaction)
+- **Monitoring**: Check logs for "blocks behind" metric
+
+**Reference**: [services/ingester/main.go](../services/ingester/main.go), [services/ingester/README.md](../services/ingester/README.md)
 
 ---
 
-### 2. Processor Service
+### 2. Processor Service (Future)
 
-**Responsibility**: Consume messages, parse events, write to database
+> **Note**: Not currently implemented. Ingester writes directly to PostgreSQL.
 
-**Technology**: Rust (sqlx, rdkafka) or Go (gorm, sarama)
+**Planned Responsibility**: Consume block events, parse logs, enrich data
 
-**Components**:
-- **Message Consumers**: Kafka/RabbitMQ consumers with consumer groups
-- **Event Parsers**: ERC20, ERC721, custom ABI decoders
+**Planned Technology**: Go with Kafka consumer
+
+**When to Implement**: 
+- Need event parsing pipeline (ERC20 transfers, swaps, etc.)
+- Multiple consumers for different event types
+- Async notifications/webhooks
+
+**Planned Components**:
+- **Event Parsers**: ERC20, ERC721, Uniswap, custom ABI decoders
 - **Database Repository**: Optimized batch inserts
-- **Cache Manager**: Redis integration for hot data
+- **Cache Integration**: Redis for hot data
 
-**Event Parsing**:
+**Code Example** (Go - Planned):
 
-```rust
+```go
 // ERC20 Transfer Event Parser
-struct ERC20Parser {
-    transfer_signature: H256, // keccak256("Transfer(address,address,uint256)")
+type ERC20Parser struct {
+    transferSig common.Hash // keccak256("Transfer(address,address,uint256)")
 }
 
-impl ERC20Parser {
-    async fn parse(&self, log: &Log) -> Result<Option<TokenTransfer>> {
-        if log.topics[0] != self.transfer_signature {
-            return Ok(None);
-        }
-        
-        Ok(Some(TokenTransfer {
-            contract_address: log.address,
-            from: Address::from(log.topics[1]),
-            to: Address::from(log.topics[2]),
-            amount: U256::from_big_endian(&log.data),
-            block_number: log.block_number,
-            tx_hash: log.transaction_hash,
-        }))
+func (p *ERC20Parser) Parse(log *types.Log) (*TokenTransfer, error) {
+    if log.Topics[0] != p.transferSig {
+        return nil, nil  // Not a transfer event
     }
+    
+    return &TokenTransfer{
+        ContractAddress: log.Address,
+        From:           common.BytesToAddress(log.Topics[1].Bytes()),
+        To:             common.BytesToAddress(log.Topics[2].Bytes()),
+        Amount:         new(big.Int).SetBytes(log.Data),
+        BlockNumber:    log.BlockNumber,
+        TxHash:         log.TxHash,
+    }, nil
 }
-```
-
-**Database Operations**:
-- **Batch Inserts**: Insert 1000s of records at once
-- **Upserts**: Handle duplicate data gracefully
-- **Transactions**: Atomic operations for reorg rollbacks
-
-```sql
--- Optimized batch insert
-INSERT INTO events (tx_hash, block_number, log_index, contract_address, event_signature, data)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (tx_hash, log_index) DO NOTHING;
-```
-
-**Configuration**:
-```yaml
-processor:
-  consumers:
-    - topic: raw.blocks
-      group_id: block_processor
-      concurrency: 10
-    - topic: parsed.events
-      group_id: event_processor
-      concurrency: 5
-  database:
-    max_connections: 50
-    batch_size: 1000
-  cache:
-    redis_url: redis://localhost:6379
-    ttl: 300s
 ```
 
 ---
 
 ### 3. API Service
 
-**Responsibility**: Serve blockchain data via REST and WebSocket
+**Responsibility**: Serve blockchain data via REST endpoints
 
-**Technology**: Rust (axum, tower) or Go (gin, gorilla/websocket)
+**Technology**: Go 1.21+ with Gin framework
+
+**Current Implementation**:
 
 **Endpoints**:
 
 ```
-# Multi-chain endpoints (chain_id in path or query param)
-GET    /api/v1/:chain_id/blocks/:number           # Get block by number on specific chain
-GET    /api/v1/:chain_id/blocks/:hash              # Get block by hash
-GET    /api/v1/:chain_id/transactions/:hash        # Get transaction details
-GET    /api/v1/:chain_id/events                    # Query events with filters
-GET    /api/v1/:chain_id/addresses/:address/txs    # Get transactions for address
-GET    /api/v1/:chain_id/addresses/:address/balance # Get token balances
-
-# Cross-chain endpoints
-GET    /api/v1/addresses/:address/txs              # Get txs across ALL chains
-GET    /api/v1/addresses/:address/portfolio        # Portfolio across all chains
-GET    /api/v1/chains                              # List supported chains
-GET    /api/v1/chains/:chain_id/status             # Chain sync status
+# Multi-chain endpoints (chain_id in path)
+GET    /api/v1/chains                           # List all chains with stats
+GET    /api/v1/chains/:chain_id                 # Get chain details
+GET    /api/v1/chains/:chain_id/stats           # Chain statistics
+GET    /api/v1/chains/:chain_id/blocks          # Recent blocks (paginated)
+GET    /api/v1/chains/:chain_id/blocks/:number  # Get block by number
+GET    /api/v1/chains/:chain_id/transactions    # Recent transactions (paginated)
+GET    /api/v1/chains/:chain_id/transactions/:hash  # Get transaction details
 
 # System endpoints
-GET    /api/v1/health                              # Health check (all chains)
-GET    /api/v1/metrics                             # Prometheus metrics
-WS     /api/v1/:chain_id/stream                    # Chain-specific WebSocket
-WS     /api/v1/stream                              # Multi-chain WebSocket
+GET    /health                                  # Health check (all chains)
+GET    /ingester/status                         # Ingester status
 ```
 
-**Query Parameters** (for `/events`):
-- `contract_address`: Filter by contract
-- `event_signature`: Filter by event type
-- `from_block`, `to_block`: Block range
-- `limit`, `offset`: Pagination
-- `order`: `asc` or `desc`
+**Query Parameters**:
+- `limit`: Number of records (default: 20, max: 100)
+- `offset`: Pagination offset
 
 **Example Response**:
 ```json
 {
   "data": [
     {
-      "tx_hash": "0x123...",
+      "chain_id": 1,
       "block_number": 18234567,
-      "log_index": 42,
-      "contract_address": "0xA0b...",
-      "event_signature": "0xddf...",
-      "decoded_data": {
-        "from": "0x456...",
-        "to": "0x789...",
-        "value": "1000000000000000000"
-      },
-      "timestamp": "2025-11-14T12:34:56Z"
+      "block_hash": "0x123...",
+      "timestamp": "2025-11-14T12:34:56Z",
+      "transaction_count": 150,
+      "gas_used": 12456789,
+      "gas_limit": 30000000
     }
   ],
   "pagination": {
-    "limit": 100,
+    "limit": 20,
     "offset": 0,
     "total": 15234
   }
 }
 ```
 
-**Caching Strategy**:
-1. **In-Memory**: Recent blocks (last 100)
-2. **Redis**: Hot queries (5 min TTL)
-3. **Database**: Full historical data
+**CORS Configuration**:
+```go
+// Allow frontend development
+config := cors.DefaultConfig()
+config.AllowOrigins = []string{"http://localhost:5173"}
+router.Use(cors.New(config))
+```
 
-**Rate Limiting**:
-```rust
-// Token bucket algorithm
-struct RateLimiter {
-    tokens: u32,
-    max_tokens: u32,
-    refill_rate: Duration,
-}
+**Performance** (Current):
+- Direct PostgreSQL queries (no caching layer yet)
+- Query time: 50-200ms for block/transaction queries
+- Partition-aware queries (always filter by `chain_id`)
 
-impl RateLimiter {
-    async fn allow(&mut self) -> bool {
-        self.refill();
-        if self.tokens > 0 {
-            self.tokens -= 1;
-            true
-        } else {
-            false
-        }
-    }
+**Code Example** (Go):
+
+```go
+// Get blocks for a chain
+func (api *API) getBlocks(c *gin.Context) {
+    chainID := c.Param("chainId")
+    limit := c.DefaultQuery("limit", "20")
+    
+    query := `
+        SELECT chain_id, block_number, block_hash, timestamp, 
+               gas_used, gas_limit, transaction_count
+        FROM blocks
+        WHERE chain_id = $1
+        ORDER BY block_number DESC
+        LIMIT $2
+    `
+    
+    rows, err := api.db.Query(query, chainID, limit)
+    // ... handle results
 }
 ```
 
-**Configuration**:
-```yaml
-api:
-  listen_addr: 0.0.0.0:8080
-  rate_limit:
-    requests_per_second: 100
-    burst: 200
-  cache:
-    memory_size_mb: 256
-    redis_ttl: 300s
-  cors:
-    allowed_origins: ["*"]
-  tls:
-    enabled: true
-    cert_path: /certs/server.crt
-    key_path: /certs/server.key
-```
+**Future Enhancements**:
+- Redis caching layer
+- WebSocket subscriptions for real-time updates
+- GraphQL endpoint
+- Rate limiting per API key
+
+**Reference**: [services/api/main.go](../services/api/main.go)
 
 ---
 
 ## Database Schema
+
+See [database/migrations/](../database/migrations/) for complete schema.
 
 ### PostgreSQL Schema with Partitioning
 
@@ -380,14 +321,23 @@ CREATE TABLE checkpoints (
 
 ---
 
-## Message Broker Design
+## Message Broker Design (Future)
 
-### Kafka Topics
+> **Current Status**: Not implemented. Ingester writes directly to PostgreSQL.  
+> **See**: [DESIGN_DECISIONS.md](../DESIGN_DECISIONS.md) for rationale
+
+**When to Add**: 
+- Indexing >10 chains (need better fan-out)
+- Event processing pipeline with multiple consumers
+- Async notifications/webhooks
+- Replay requirements for complex reorg handling
+
+### Kafka Topics (Planned)
 
 ```yaml
 topics:
   raw.blocks:
-    partitions: 10
+    partitions: 10  # Per chain
     replication_factor: 3
     retention_ms: 86400000  # 1 day
     
@@ -407,48 +357,37 @@ topics:
     retention_ms: 2592000000  # 30 days
 ```
 
-### Message Schema
+### Message Schema (Planned)
 
-```protobuf
-// Protocol Buffers schema for efficient serialization
-message Block {
-  uint64 block_number = 1;
-  string block_hash = 2;
-  string parent_hash = 3;
-  int64 timestamp = 4;
-  string miner = 5;
-  uint64 gas_used = 6;
-  uint64 gas_limit = 7;
-  repeated Transaction transactions = 8;
+```go
+// Block message
+type BlockMessage struct {
+    ChainID     int64     `json:"chain_id"`
+    BlockNumber int64     `json:"block_number"`
+    BlockHash   string    `json:"block_hash"`
+    ParentHash  string    `json:"parent_hash"`
+    Timestamp   time.Time `json:"timestamp"`
+    GasUsed     int64     `json:"gas_used"`
+    GasLimit    int64     `json:"gas_limit"`
+    TxCount     int       `json:"transaction_count"`
 }
 
-message Transaction {
-  string tx_hash = 1;
-  uint64 block_number = 2;
-  string from_address = 3;
-  string to_address = 4;
-  string value = 5;
-  bytes input = 6;
-  repeated Log logs = 7;
-}
-
-message Log {
-  uint32 log_index = 1;
-  string contract_address = 2;
-  repeated string topics = 3;
-  bytes data = 4;
-}
-
-message ReorgEvent {
-  uint64 rollback_to_block = 1;
-  uint64 detected_at_block = 2;
-  int64 timestamp = 3;
+// Reorg event
+type ReorgEvent struct {
+    ChainID         int64     `json:"chain_id"`
+    RollbackToBlock int64     `json:"rollback_to_block"`
+    DetectedAtBlock int64     `json:"detected_at_block"`
+    Timestamp       time.Time `json:"timestamp"`
 }
 ```
 
 ---
 
-## Observability
+## Observability (Aspirational)
+
+> **Current Status**: Basic logging only. Metrics/tracing/dashboards are planned.
+
+The sections below describe a comprehensive observability stack for production deployment.
 
 ### Metrics (Prometheus)
 
@@ -571,7 +510,11 @@ indexer_api_cache_hit_rate
 
 ---
 
-## Fault Tolerance
+## Fault Tolerance (Aspirational)
+
+> **Current Status**: Basic retry with exponential backoff in ingester. Advanced patterns below are planned.
+
+The sections below describe production-grade fault tolerance patterns.
 
 ### Retry Mechanisms
 
@@ -671,7 +614,11 @@ async fn graceful_shutdown(services: Vec<Service>) {
     // 5. Flush remaining metrics
     metrics_exporter.flush().await;
 }
-```
+``` (Aspirational)
+
+> **Current Status**: Basic optimizations (partitioning, goroutines). Advanced patterns below are planned.
+
+The sections below describe production-level performance optimizations.
 
 ---
 
@@ -753,7 +700,9 @@ let (block1, block2) = tokio::join!(
     rpc.get_block(1000000),
     rpc.get_block(1000001),
 );
-```
+``` (Aspirational)
+
+> **Current Status**: Basic CORS configuration. Production security features below are planned.
 
 ---
 

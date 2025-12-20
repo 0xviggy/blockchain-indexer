@@ -1,5 +1,8 @@
 # Docker & Kubernetes
 
+> ⚠️ **EDUCATIONAL MATERIAL** - Interview prep & learning reference  
+> For project-specific setup, see [../SANDBOX_SETUP.md](../SANDBOX_SETUP.md)
+
 > **Purpose**: Understanding containerization, orchestration, and deployment patterns for blockchain infrastructure. This guide covers Docker fundamentals, Kubernetes concepts, and production deployment strategies.
 
 **Last Updated**: November 27, 2025

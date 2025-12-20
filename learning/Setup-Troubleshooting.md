@@ -1,146 +1,39 @@
-# Setup, Troubleshooting & Performance Guide
+# Troubleshooting & Performance Guide
 
-> **Purpose**: A comprehensive guide for setting up the blockchain indexer, troubleshooting common issues, optimizing performance, and debugging production incidents.
+> ⚠️ **EDUCATIONAL MATERIAL** - Interview prep & real-world debugging reference  
+> For project setup, see [../SANDBOX_SETUP.md](../SANDBOX_SETUP.md)
 
-**Last Updated**: November 28, 2025
+> **Purpose**: Troubleshooting common issues, performance optimization, debugging techniques, and real-world case studies with integrated interview Q&A.
+
+**Last Updated**: December 20, 2025
 
 ---
 
 ## Table of Contents
 
-- [Part 1: Setup & Quick Start](#part-1-setup--quick-start)
-  - [Prerequisites](#prerequisites)
-  - [System Architecture](#system-architecture-overview)
-  - [Installation Steps](#installation-steps)
-  - [Starting the System](#starting-the-system)
-  - [Verification](#verification)
-- [Part 2: Troubleshooting Common Issues](#part-2-troubleshooting-common-issues)
+- [Quick Reference Commands](#quick-reference-commands)
+- [Part 1: Troubleshooting Common Issues](#part-1-troubleshooting-common-issues)
   - [Ingester Lag](#issue-ingester-falling-behind-chain-head)
   - [Consumer Lag](#issue-processor-consumer-lag)
   - [API Latency](#issue-api-slow-response-times)
   - [Docker & Port Issues](#docker--port-issues)
-- [Part 3: Performance Optimization](#part-3-performance-optimization)
+- [Part 2: Performance Optimization](#part-2-performance-optimization)
   - [Database Tuning](#database-optimizations)
   - [Go Performance Tips](#go-performance-tips)
   - [Kafka & Redis Tuning](#kafka--redis-optimizations)
-- [Part 4: Real-World Case Studies](#part-4-real-world-case-studies)
+- [Part 3: Real-World Case Studies](#part-3-real-world-case-studies)
   - [Database Batch INSERT (300x Speedup)](#case-study-1-database-batch-insert-300x-speedup)
   - [Receipt Fetch Retry Logic](#case-study-2-receipt-fetch-retry-logic--silent-failures)
   - [React State Management Bug](#case-study-3-react-state-management---default-parameter-bug)
   - [Multiple Process Detection](#case-study-4-multiple-process-detection--cleanup)
-- [Part 5: Monitoring & Debugging](#part-5-monitoring--debugging)
+- [Part 4: Monitoring & Debugging](#part-4-monitoring--debugging)
   - [Metrics to Monitor](#metrics-to-monitor)
   - [Debugging Commands](#debugging-commands)
 - [Interview Questions & Answers](#interview-questions--answers)
 
 ---
 
-## Part 1: Setup & Quick Start
-
-Complete guide to getting the blockchain indexer up and running on your local machine.
-
-### Prerequisites
-
-#### Install Requirements (macOS/Linux)
-
-```bash
-# 1. Install Docker Desktop
-# macOS: https://docker.com or brew install --cask docker
-# Linux: sudo apt-get install docker.io docker-compose
-
-# 2. Install Go (1.21+)
-# macOS: brew install go
-# Linux: sudo snap install go --classic
-
-# 3. Verify installations
-docker --version  # Should be 20.10+
-go version        # Should be 1.21+
-```
-
-#### Understanding Go Installation
-
-**Global Installation**:
-- Go binary: `/opt/homebrew/bin/go` (or `/usr/local/go/bin`)
-- Go toolchain: Available system-wide for all projects
-- Module cache: `~/go/pkg/mod` (shared global cache for all downloaded modules)
-
-**Per-Project Dependencies**:
-- Each service has its own `go.mod` file defining dependencies and versions
-- When you run `go mod download`, modules are cached globally but tracked locally
-- This is the standard Go approach: global toolchain + global cache, but project-specific dependency tracking
-
-### System Architecture Overview
-
-```
-Blockchain → Ingester → Kafka → Processor → PostgreSQL → API → Users
-                                              ↓
-                                           Redis Cache
-```
-
-**Why event-driven?** 
-- Decouples services, enables independent scaling
-- Provides replay capability for reorgs
-- Allows multiple consumers of blockchain data
-
-**Full details**: See [System Design & Architecture](./System-Design-Architecture.md)
-
-### Installation Steps
-
-#### Phase 1: Infrastructure Setup
-
-**What we built**: Docker Compose setup with PostgreSQL, Redis, and Kafka
-
-**Files Created**:
-1. **`infrastructure/docker/docker-compose.yml`**
-   - PostgreSQL 15 (port 5432)
-   - Redis 7 (port 6379)
-   - Redpanda/Kafka (ports 19092, 18081, 18082)
-   - Kafka UI (port 8080) - for debugging
-   - pgAdmin (port 5050) - for DB management
-
-2. **`infrastructure/docker/init-db.sh`**
-   - PostgreSQL initialization script
-   - Enables UUID and pg_stat_statements extensions
-   - Runs automatically on first container start
-
-3. **`database/migrations/`**
-   - Complete schema with partitioning
-   - Tables: chains, blocks, transactions, events, checkpoints
-   - Partitioned by chain_id for multi-chain support
-
-4. **`Makefile`**
-   - `make setup` - One command to start everything
-   - `make docker-up` - Start infrastructure
-   - `make migrate-up` - Run database migrations
-   - `make db-shell` - Open PostgreSQL CLI
-   - `make status` - Check service health
-
-### Starting the System
-
-#### Quick Start Commands
-
-```bash
-# 1. Start all infrastructure (PostgreSQL, Redis, Kafka)
-make docker-up
-
-# 2. Wait for services to be ready (check logs)
-make status
-
-# 3. Run database migrations
-make migrate-up
-
-# 4. Verify tables were created
-make db-shell
-# Then in psql: \dt
-
-# 5. View indexing status
-# In psql:
-SELECT * FROM chains;
-```
-
-### Verification
-
-#### Check Infrastructure Services
+## Quick Reference Commands
 
 ```bash
 # Check if containers are running
@@ -149,39 +42,20 @@ make status
 # View logs from all containers
 docker compose -f infrastructure/docker/docker-compose.yml logs -f
 
-# View specific container logs
-docker logs indexer-postgres
-docker logs indexer-kafka
-
-# Restart everything
-make docker-down && make docker-up
-
-# Reset database (deletes all data!)
-make db-reset
-```
-
-#### Check Database Connection
-
-```bash
 # Open PostgreSQL CLI
 make db-shell
 
 # Check Redis connection
 docker exec -it indexer-redis redis-cli PING
-# Should return PONG
 
-# Check Kafka topics
-docker exec -it indexer-kafka rpk topic list
+# Web UIs for Debugging
+# - Kafka UI: http://localhost:8080
+# - pgAdmin: http://localhost:5050 (admin@indexer.local / admin)
 ```
-
-#### Web UIs for Debugging
-
-- **Kafka UI**: http://localhost:8080 - View topics, messages, consumer groups
-- **pgAdmin**: http://localhost:5050 - Database GUI (login: admin@indexer.local / admin)
 
 ---
 
-## Part 2: Troubleshooting Common Issues
+## Part 1: Troubleshooting Common Issues
 
 ### Issue: Ingester falling behind chain head
 
@@ -419,7 +293,7 @@ psql -h localhost -U indexer -d indexer
 
 ---
 
-## Part 3: Performance Optimization
+## Part 2: Performance Optimization
 
 ### Database Optimizations
 
@@ -550,7 +424,7 @@ redis-cli CONFIG SET timeout 300
 
 ---
 
-## Part 4: Real-World Case Studies
+## Part 3: Real-World Case Studies
 
 These are actual production issues encountered and solved during development, with detailed analysis and solutions.
 
@@ -699,7 +573,7 @@ lsof +D /path/to/project/services/ingester
 
 ---
 
-## Part 5: Monitoring & Debugging
+## Part 4: Monitoring & Debugging
 
 ### Metrics to Monitor
 

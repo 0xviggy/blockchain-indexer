@@ -1,109 +1,104 @@
 # Blockchain Indexer Learning Guide
 
+> ⚠️ **EDUCATIONAL MATERIAL** - Interview prep & senior/lead role preparation  
+> These guides are for learning, NOT project-specific documentation.
+
 Comprehensive learning materials, interview preparation, and technical deep-dives for blockchain indexer architecture and implementation.
+
+> **Project Design Decisions**: See [../DESIGN_DECISIONS.md](../DESIGN_DECISIONS.md) for actual architectural choices in this project.
 
 ---
 
 ## 📚 Core Technical Guides
 
-### 1. [System Design & Architecture](./System-Design-Architecture.md) ⭐
-**High-Level Architecture & Design Decisions**
-- Indexer architecture patterns (Microservices, Event-Driven)
-- Handling blockchain reorgs and finality
-- Rate limiting and data consistency strategies
+| Guide | Lines | Focus |
+|-------|-------|-------|
+| [System Design & Architecture](./System-Design-Architecture.md) ⭐ | ~4,400 | Comprehensive architecture patterns, reorgs, scaling |
+| [Go Programming](./Go-Programming.md) ⭐ | ~1,600 | Concurrency, modules, testing patterns |
+| [Docker & Kubernetes](./Docker-Kubernetes.md) ⭐ | ~1,900 | Containerization, orchestration |
+| [Deployment & Production](./Deployment-Production.md) ⭐ | ~1,400 | CI/CD, hosting, monitoring |
+| [Message Queues](./Message-Queues.md) ⭐ | ~1,300 | Kafka, Redis patterns (educational) |
+| [Database Fundamentals](./Database-Fundamentals.md) ⭐ | ~1,200 | ACID, normalization, CAP theorem |
+| [Frontend Development](./Frontend-Development.md) ⭐ | ~950 | React, Web3, cross-stack skills |
+| [PostgreSQL Database](./PostgreSQL-Database.md) ⭐ | ~870 | PostgreSQL-specific features |
+| [Troubleshooting](./Setup-Troubleshooting.md) ⭐ | ~760 | Debugging, performance, case studies |
+| [MEV Analysis](./MEV_ANALYSIS.md) 🔬 | ~500 | MEV detection research & strategies |
+
+**Total**: ~15,000 lines of educational content
+
+---
+
+### Quick Guide Summaries
+
+**[System Design & Architecture](./System-Design-Architecture.md)** - The big one!
+- Indexer architecture patterns, reorg handling, rate limiting
+- Technology trade-offs (Go vs Rust, PostgreSQL vs alternatives)
+- API design patterns, Kafka message ordering
 - **Interview Q&A**: System design scenarios, trade-offs
 
-### 2. [Go Programming](./Go-Programming.md) ⭐
-**Language Fundamentals & Best Practices**
-- Go modules, workspaces, and dependency management
-- Concurrency patterns (Goroutines, Channels, Context)
-- Testing strategies and style guides
-- **Interview Q&A**: Concurrency, memory management, idiomatic Go
+**[Go Programming](./Go-Programming.md)**
+- Go modules, concurrency (Goroutines, Channels, Context)
+- Testing strategies and idiomatic patterns
+- **Interview Q&A**: Concurrency, memory management
 
-### 3. [PostgreSQL Database](./PostgreSQL-Database.md) ⭐
-**Database Design & Optimization**
-- Schema design for blockchain data
-- Indexing strategies and partitioning
-- Performance tuning and batch processing
-- **Interview Q&A**: SQL optimization, ACID properties, scaling
+**[Database Fundamentals](./Database-Fundamentals.md)** + **[PostgreSQL](./PostgreSQL-Database.md)**
+- Theory: ACID, normalization, CAP theorem, indexing theory
+- Practice: PostgreSQL partitioning, query optimization
+- **Interview Q&A**: SQL optimization, scaling strategies
 
-### 4. [Message Queues (Kafka & Redis)](./Message-Queues.md) ⭐
-**Event Streaming & Caching**
+**[Message Queues](./Message-Queues.md)**
 - Kafka producer/consumer patterns
-- Redis caching strategies and data structures
-- Handling backpressure and ordering
-- **Interview Q&A**: Message delivery semantics, scaling queues
+- Redis caching strategies
+- *Note: Kafka NOT currently used in this project*
 
-### 5. [Docker & Kubernetes](./Docker-Kubernetes.md) ⭐
-**Containerization & Orchestration**
-- Dockerfile best practices and multi-stage builds
-- Kubernetes deployment patterns (StatefulSets, Deployments)
-- Networking, volumes, and health checks
-- **Interview Q&A**: Container lifecycle, orchestration concepts
+**[Docker & Kubernetes](./Docker-Kubernetes.md)**
+- Dockerfile best practices, multi-stage builds
+- Kubernetes deployment patterns
+- **Interview Q&A**: Container lifecycle
 
-### 6. [Frontend Development](./Frontend-Development.md) ⭐
-**Modern Web3 Frontend Stack**
-- React, Vite, and TypeScript setup
-- State management (Zustand, React Query)
-- Web3 integration (Wagmi, RainbowKit)
-- Cross-stack skills and framework switching
-- **Interview Q&A**: React lifecycle, performance, Web3 challenges
-
-### 7. [Setup & Troubleshooting](./Setup-Troubleshooting.md) ⭐
-**Getting Started & Operations**
-- Quick start guide for local development
-- Common issues and solutions
-- Performance tuning and monitoring
-- **Interview Q&A**: Debugging scenarios, operational excellence
-
-### 8. [Deployment & Production](./Deployment-Production.md) ⭐
-**Going to Production**
-- Production readiness checklist
-- CI/CD pipelines and security
-- Monitoring, alerting, and cost optimization
-- Infrastructure setup (Supabase, Railway, Vercel)
+**[Troubleshooting](./Setup-Troubleshooting.md)**
+- Real-world debugging case studies
+- Performance optimization patterns
+- **Interview Q&A**: Debugging scenarios
 
 ---
 
 ## 🎯 Learning Paths
 
 ### For Backend Engineers
-1. Start with [System Design & Architecture](./System-Design-Architecture.md)
-2. Deep dive into [Go Programming](./Go-Programming.md)
-3. Master [PostgreSQL](./PostgreSQL-Database.md) and [Message Queues](./Message-Queues.md)
-4. Learn [Docker & Kubernetes](./Docker-Kubernetes.md)
-5. Review [Deployment & Production](./Deployment-Production.md)
+1. [System Design & Architecture](./System-Design-Architecture.md) - Start here
+2. [Go Programming](./Go-Programming.md) - Language deep-dive
+3. [Database Fundamentals](./Database-Fundamentals.md) + [PostgreSQL](./PostgreSQL-Database.md)
+4. [Docker & Kubernetes](./Docker-Kubernetes.md)
+5. [Deployment & Production](./Deployment-Production.md)
 
 ### For Full-Stack Engineers
-1. Begin with [Setup & Troubleshooting](./Setup-Troubleshooting.md) to get running
-2. Understand [System Design](./System-Design-Architecture.md)
-3. Focus on [Frontend Development](./Frontend-Development.md)
-4. Review [Deployment & Production](./Deployment-Production.md)
+1. [Troubleshooting](./Setup-Troubleshooting.md) - Get running quickly
+2. [System Design](./System-Design-Architecture.md) - Understand architecture
+3. [Frontend Development](./Frontend-Development.md) - React/Web3 patterns
+4. [Deployment & Production](./Deployment-Production.md)
 
 ### For Interview Preparation
-Each guide contains a dedicated **Interview Questions** section at the end.
-1. **System Design**: [System-Design-Architecture.md](./System-Design-Architecture.md)
-2. **Go Concurrency**: [Go-Programming.md](./Go-Programming.md)
-3. **Database Optimization**: [PostgreSQL-Database.md](./PostgreSQL-Database.md)
-4. **DevOps**: [Docker-Kubernetes.md](./Docker-Kubernetes.md)
-5. **Frontend**: [Frontend-Development.md](./Frontend-Development.md)
+Each guide contains a dedicated **Interview Questions** section:
+- **System Design**: [System-Design-Architecture.md](./System-Design-Architecture.md#interview-questions)
+- **Go Concurrency**: [Go-Programming.md](./Go-Programming.md#interview-questions)
+- **Databases**: [Database-Fundamentals.md](./Database-Fundamentals.md#interview-questions) + [PostgreSQL](./PostgreSQL-Database.md#interview-questions--answers)
+- **DevOps**: [Docker-Kubernetes.md](./Docker-Kubernetes.md#interview-questions--answers)
+- **Debugging**: [Troubleshooting](./Setup-Troubleshooting.md#interview-questions--answers)
 
 ---
 
-## 🔗 Related Documentation
+## 🔗 Related Project Documentation
 
-- [Business Specification](../docs/BUSINESS_SPEC.md) - Product requirements
-- [Technical Specification](../docs/TECHNICAL_SPEC.md) - System architecture
-- [Development Status](../docs/DEVELOPMENT_STATUS.md) - Current progress
-- [Deployment Guide](../docs/DEPLOYMENT.md) - Infrastructure details
-
----
-
-## 📂 Archive
-
-Old numbered files (01-11) have been consolidated into the topic-based guides above. See `archive/` folder for historical reference.
+| Document | Purpose |
+|----------|---------|
+| [../docs/DESIGN_DECISIONS.md](../docs/DESIGN_DECISIONS.md) | Actual project architecture choices |
+| [../docs/setup/SANDBOX_SETUP.md](../docs/setup/SANDBOX_SETUP.md) | Developer setup guide |
+| [../docs/setup/DATABASE_GUIDE.md](../docs/setup/DATABASE_GUIDE.md) | Database setup & migrations |
+| [../docs/PROGRESS_TRACKING.md](../docs/PROGRESS_TRACKING.md) | Project status |
+| [../docs/TECHNICAL_SPEC.md](../docs/TECHNICAL_SPEC.md) | Implementation details |
 
 ---
 
-**Last Updated**: November 28, 2025  
-**Status**: ✅ Reorganization complete - 8 consolidated guides (13,300 lines)
+**Last Updated**: December 20, 2025  
+**Status**: ✅ 9 consolidated guides (~14,400 lines of educational content)

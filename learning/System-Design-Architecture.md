@@ -1,6 +1,11 @@
 # System Design & Architecture
 
-> **Purpose**: Architectural decisions, design patterns, and implementation concepts for the blockchain indexer - covering reorg handling, scaling strategies, technology trade-offs, and API design with integrated interview Q&A.
+> ⚠️ **EDUCATIONAL MATERIAL** - Interview prep & deep-dive reference (~4,400 lines)  
+> For project-specific architecture, see [../DESIGN_DECISIONS.md](../DESIGN_DECISIONS.md)
+
+> **Purpose**: Comprehensive architectural patterns, design concepts, and implementation strategies for blockchain indexers - covering reorg handling, scaling strategies, technology trade-offs, and API design with integrated interview Q&A.
+
+> **This is educational material, not project specs**. For THIS project's actual implementation choices, see [../DESIGN_DECISIONS.md](../DESIGN_DECISIONS.md).
 
 ---
 
@@ -10,7 +15,7 @@
 - [Event Parsing](#event-parsing)
 - [Database Strategy](#database-strategy)
 - [Rate Limiting](#rate-limiting)
-- [Kafka Message Ordering](#kafka-message-ordering)
+- [Kafka Message Ordering](#kafka-message-ordering) *(Educational - not currently implemented)*
 - [Technology Trade-offs](#technology-trade-offs)
 - [API Design](#api-design)
 - [Interview Questions](#interview-questions)

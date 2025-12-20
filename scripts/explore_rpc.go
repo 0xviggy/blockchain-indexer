@@ -97,6 +97,14 @@ var SupportedChains = []ChainConfig{
 }
 
 func main() {
+	// Check for --generate-seeds flag
+	generateSeeds := false
+	for _, arg := range os.Args[1:] {
+		if arg == "--generate-seeds" {
+			generateSeeds = true
+		}
+	}
+
 	// Check which chains are configured
 	configuredChains := []ChainConfig{}
 	for _, chain := range SupportedChains {
@@ -127,11 +135,28 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx := context.Background()
+
+	// If --generate-seeds flag, generate seed data and exit
+	if generateSeeds {
+		log.Println("🌱 === GENERATING SEED DATA ===")
+		log.Printf("Using first configured chain: %s\n\n", configuredChains[0].Name)
+
+		client, err := ethclient.Dial(configuredChains[0].ExampleRPCURL)
+		if err != nil {
+			log.Fatalf("❌ Failed to connect: %v", err)
+		}
+		defer client.Close()
+
+		if err := generateSeedData(client, configuredChains[0]); err != nil {
+			log.Fatalf("❌ Failed to generate seeds: %v", err)
+		}
+		return
+	}
+
 	log.Println("🔍 === MULTI-CHAIN RPC EXPLORATION ===")
 	log.Printf("Found %d configured chain(s)\n", len(configuredChains))
 	log.Println("")
-
-	ctx := context.Background()
 
 	// Explore each configured chain
 	for i, chain := range configuredChains {
@@ -615,4 +640,210 @@ func getSignatureName(sig string) string {
 		return name
 	}
 	return "Unknown"
+}
+
+// generateSeedData fetches recent blockchain data and generates SQL seed file
+func generateSeedData(client *ethclient.Client, chainConfig ChainConfig) error {
+	ctx := context.Background()
+
+	// Get latest block
+	header, err := client.HeaderByNumber(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to get latest block: %w", err)
+	}
+
+	latestBlock := header.Number.Int64()
+	startBlock := latestBlock - 9 // Get last 10 blocks for richer dataset
+
+	log.Printf("📦 Generating seed data from blocks %d to %d...\n", startBlock, latestBlock)
+	log.Printf("🔗 Chain: %s (ID: %d)\n", chainConfig.Name, chainConfig.ChainID)
+
+	// Open output file (relative to project root)
+	f, err := os.Create("../database/seeds/001_sample_blocks.sql")
+	if err != nil {
+		return fmt.Errorf("failed to create seed file: %w", err)
+	}
+	defer f.Close()
+
+	// Write SQL header
+	fmt.Fprintf(f, "-- Auto-generated seed data from %s blockchain\n", chainConfig.Name)
+	fmt.Fprintf(f, "-- Source blocks: %d-%d (chain ID: %d)\n", startBlock, latestBlock, chainConfig.ChainID)
+	fmt.Fprintf(f, "-- Generated: automatically via explore_rpc.go --generate-seeds\n")
+	fmt.Fprintf(f, "-- \n")
+	fmt.Fprintf(f, "-- This seed file populates:\n")
+	fmt.Fprintf(f, "--   - blocks: Full block metadata\n")
+	fmt.Fprintf(f, "--   - transactions: With input_data for future calldata parsing\n")
+	fmt.Fprintf(f, "--   - events: Event logs for future event parsing\n")
+	fmt.Fprintf(f, "-- \n")
+	fmt.Fprintf(f, "-- Future extensibility:\n")
+	fmt.Fprintf(f, "--   - Add internal_transactions when trace support is added\n")
+	fmt.Fprintf(f, "--   - Add parsed_calldata when function signature parsing is implemented\n")
+	fmt.Fprintf(f, "--   - Add revert_reasons when error handling is enhanced\n\n")
+	fmt.Fprintf(f, "BEGIN;\n\n")
+	fmt.Fprintf(f, "-- Clean up existing seed data (keeps real indexed data)\n")
+	fmt.Fprintf(f, "DELETE FROM events WHERE block_number < 1000;\n")
+	fmt.Fprintf(f, "DELETE FROM transactions WHERE block_number < 1000;\n")
+	fmt.Fprintf(f, "DELETE FROM blocks WHERE block_number < 1000;\n\n")
+
+	// Fetch each block
+	seedBlockNum := 100
+	totalTxs := 0
+	totalEvents := 0
+
+	for i := startBlock; i <= latestBlock; i++ {
+		block, err := client.BlockByNumber(ctx, big.NewInt(i))
+		if err != nil {
+			log.Printf("⚠️  Skipping block %d: %v", i, err)
+			continue
+		}
+
+		log.Printf("  Block %d: %d transactions", block.Number().Int64(), len(block.Transactions()))
+
+		// Write block insert
+		fmt.Fprintf(f, "-- Block %d (mapped to seed block %d)\n", block.Number().Int64(), seedBlockNum)
+		fmt.Fprintf(f, "INSERT INTO blocks (chain_id, block_number, block_hash, parent_hash, timestamp, gas_used, gas_limit, base_fee_per_gas, transaction_count) VALUES\n")
+		fmt.Fprintf(f, "(%d, %d, '%s', '%s', to_timestamp(%d), %d, %d, %s, %d)\n",
+			chainConfig.ChainID, // Use configured chain ID instead of hardcoded 1
+			seedBlockNum,
+			block.Hash().Hex(),
+			block.ParentHash().Hex(),
+			block.Time(),
+			block.GasUsed(),
+			block.GasLimit(),
+			block.BaseFee().String(),
+			len(block.Transactions()))
+		fmt.Fprintf(f, "ON CONFLICT (chain_id, block_number) DO NOTHING;\n\n")
+
+		// Fetch up to 8 transactions per block for richer dataset
+		txCount := len(block.Transactions())
+		if txCount > 8 {
+			txCount = 8
+		}
+
+		for txIdx := 0; txIdx < txCount; txIdx++ {
+			tx := block.Transactions()[txIdx]
+
+			// Get receipt
+			receipt, err := client.TransactionReceipt(ctx, tx.Hash())
+			if err != nil {
+				log.Printf("    ⚠️  Skipping tx %s: %v", tx.Hash().Hex(), err)
+				continue
+			}
+
+			from, err := client.TransactionSender(ctx, tx, block.Hash(), uint(txIdx))
+			if err != nil {
+				log.Printf("    ⚠️  Can't get sender for tx %s: %v", tx.Hash().Hex(), err)
+				continue
+			}
+
+			toAddr := "NULL"
+			if tx.To() != nil {
+				toAddr = fmt.Sprintf("'%s'", tx.To().Hex())
+			}
+
+			// Encode input data for future calldata parsing
+			inputData := "NULL"
+			if len(tx.Data()) > 0 {
+				inputData = fmt.Sprintf("E'\\\\x%x'", tx.Data())
+			}
+
+			fmt.Fprintf(f, "-- Transaction %d from block %d\n", txIdx, block.Number().Int64())
+			fmt.Fprintf(f, "INSERT INTO transactions (tx_hash, block_number, chain_id, tx_index, from_address, to_address, value, gas_limit, gas_price, gas_used, input_data, nonce, status) VALUES\n")
+			fmt.Fprintf(f, "('%s', %d, %d, %d, '%s', %s, %s, %d, %s, %d, %s, %d, %d)\n",
+				tx.Hash().Hex(),
+				seedBlockNum,
+				chainConfig.ChainID, // Use configured chain ID
+				receipt.TransactionIndex,
+				from.Hex(),
+				toAddr,
+				tx.Value().String(),
+				tx.Gas(),
+				tx.GasPrice().String(),
+				receipt.GasUsed,
+				inputData,
+				tx.Nonce(),
+				receipt.Status)
+			fmt.Fprintf(f, "ON CONFLICT (chain_id, tx_hash) DO NOTHING;\n\n")
+			totalTxs++
+
+			// Process event logs for future event parsing
+			if len(receipt.Logs) > 0 {
+				// Limit to first 5 events per transaction to keep seed data manageable
+				eventCount := len(receipt.Logs)
+				if eventCount > 5 {
+					eventCount = 5
+				}
+
+				for logIdx := 0; logIdx < eventCount; logIdx++ {
+					eventLog := receipt.Logs[logIdx]
+
+					// Skip events with no topics (event_signature is NOT NULL)
+					if len(eventLog.Topics) == 0 {
+						continue
+					}
+
+					// Extract topics
+					eventSig := fmt.Sprintf("'%s'", eventLog.Topics[0].Hex())
+					topic1 := "NULL"
+					topic2 := "NULL"
+					topic3 := "NULL"
+
+					if len(eventLog.Topics) > 1 {
+						topic1 = fmt.Sprintf("'%s'", eventLog.Topics[1].Hex())
+					}
+					if len(eventLog.Topics) > 2 {
+						topic2 = fmt.Sprintf("'%s'", eventLog.Topics[2].Hex())
+					}
+					if len(eventLog.Topics) > 3 {
+						topic3 = fmt.Sprintf("'%s'", eventLog.Topics[3].Hex())
+					}
+
+					// Encode event data
+					eventData := "NULL"
+					if len(eventLog.Data) > 0 {
+						eventData = fmt.Sprintf("E'\\\\x%x'", eventLog.Data)
+					}
+
+					fmt.Fprintf(f, "-- Event %d from transaction %s\n", logIdx, tx.Hash().Hex())
+					fmt.Fprintf(f, "INSERT INTO events (chain_id, tx_hash, block_number, log_index, contract_address, event_signature, topic1, topic2, topic3, data) VALUES\n")
+					fmt.Fprintf(f, "(%d, '%s', %d, %d, '%s', %s, %s, %s, %s, %s)\n",
+						chainConfig.ChainID,
+						tx.Hash().Hex(),
+						seedBlockNum,
+						eventLog.Index,
+						eventLog.Address.Hex(),
+						eventSig,
+						topic1,
+						topic2,
+						topic3,
+						eventData)
+					fmt.Fprintf(f, "ON CONFLICT (chain_id, id) DO NOTHING;\n\n")
+					totalEvents++
+				}
+			}
+		}
+
+		seedBlockNum++
+	}
+
+	fmt.Fprintf(f, "COMMIT;\n\n")
+	fmt.Fprintf(f, "-- Successfully generated seed data\n")
+	fmt.Fprintf(f, "-- Blocks: %d | Transactions: %d | Events: %d\n", (latestBlock - startBlock + 1), totalTxs, totalEvents)
+	fmt.Fprintf(f, "-- \n")
+	fmt.Fprintf(f, "-- Ready for development workflows:\n")
+	fmt.Fprintf(f, "--   ✅ Blocks populated with realistic metadata\n")
+	fmt.Fprintf(f, "--   ✅ Transactions with input_data (ready for calldata parsing)\n")
+	fmt.Fprintf(f, "--   ✅ Events with topics and data (ready for event decoding)\n")
+	fmt.Fprintf(f, "--   🔄 Run ingester to make this data live and continue indexing\n\n")
+
+	log.Printf("✅ Generated seed file: database/seeds/001_sample_blocks.sql")
+	log.Printf("   📊 %d blocks, %d transactions, %d events\n", (latestBlock - startBlock + 1), totalTxs, totalEvents)
+	log.Printf("   🔗 Chain: %s (ID: %d)\n", chainConfig.Name, chainConfig.ChainID)
+	log.Println("\n📦 Seed data includes:")
+	log.Println("   ✅ Full block metadata")
+	log.Println("   ✅ Transactions with input_data (for future calldata parsing)")
+	log.Println("   ✅ Event logs (for future event decoding)")
+	log.Println("\n🚀 Next step: make db-seed")
+
+	return nil
 }

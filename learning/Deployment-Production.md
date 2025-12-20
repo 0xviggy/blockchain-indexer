@@ -1,5 +1,8 @@
 # Deployment & Production
 
+> ⚠️ **EDUCATIONAL MATERIAL** - Interview prep & learning reference  
+> For project-specific deployment, see [../docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md)
+
 > **Purpose**: Comprehensive guide to deploying blockchain indexer to production - database hosting, service deployment, CI/CD, security, monitoring, and cost optimization with integrated interview Q&A.
 
 ---

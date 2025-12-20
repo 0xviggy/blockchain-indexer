@@ -1,5 +1,8 @@
 # Go Programming
 
+> ⚠️ **EDUCATIONAL MATERIAL** - Interview prep & learning reference  
+> For project-specific implementation, see [../DESIGN_DECISIONS.md](../DESIGN_DECISIONS.md)
+
 > **Purpose**: Comprehensive Go programming guide covering modules, concurrency, patterns, and best practices for blockchain indexing systems with integrated interview Q&A.
 
 ---
